@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Upload — TravelNet{% endblock %}
+
+{% block head %}
+<style>
+  .upload-zone {
+    border: 2px dashed var(--border2);
+    border-radius: 8px;
+    padding: 32px 24px;
+    text-align: center;
+    transition: border-color .2s, background .2s;
+    cursor: pointer;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-lo);
+  }
+  .upload-zone input[type="file"] {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer;
+  }
+  .upload-icon { font-size: 28px; margin-bottom: 10px; }
+  .upload-label { font-family: var(--mono); font-size: 13px; color: var(--text-hi); }
+  .upload-hint  { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+  .selected-file { font-family: var(--mono); font-size: 12px; color: var(--accent); margin-top: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Upload</h1>
+  <p>Upload transaction exports. Files are forwarded directly to the FastAPI ingestion endpoints.</p>
+</div>
+
+<div class="grid grid-2">
+
+  {# ── Revolut ───────────────────────────────────────────── #}
+  <div class="card">
+    <div class="card-title">Revolut CSV</div>
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:18px;line-height:1.5;">
+      Upload a Revolut transaction export (<code style="font-family:var(--mono);">.csv</code>).
+      Duplicates are ignored via <code style="font-family:var(--mono);">source_transaction_id</code>.
+    </p>
+    <form method="POST" action="/upload/revolut" enctype="multipart/form-data">
+      <div class="upload-zone" id="revolut-zone">
+        <input type="file" name="file" accept=".csv" id="revolut-file"
+               onchange="showFile(this, 'revolut-selected')" required />
+        <div class="upload-icon">📄</div>
+        <div class="upload-label">Drop CSV here or click to browse</div>
+        <div class="upload-hint">Revolut_account_statement_*.csv</div>
+        <div class="selected-file" id="revolut-selected"></div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-top:14px;width:100%;">
+        ↑ Upload to FastAPI
+      </button>
+    </form>
+  </div>
+
+  {# ── Wise ─────────────────────────────────────────────── #}
+  <div class="card">
+    <div class="card-title">Wise ZIP</div>
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:18px;line-height:1.5;">
+      Upload a Wise zip export containing per-currency/per-pot CSVs.
+      Composite PKs handle the currency conversion ID collision.
+    </p>
+    <form method="POST" action="/upload/wise" enctype="multipart/form-data">
+      <div class="upload-zone" id="wise-zone">
+        <input type="file" name="file" accept=".zip" id="wise-file"
+               onchange="showFile(this, 'wise-selected')" required />
+        <div class="upload-icon">📦</div>
+        <div class="upload-label">Drop ZIP here or click to browse</div>
+        <div class="upload-hint">wise_transactions_*.zip</div>
+        <div class="selected-file" id="wise-selected"></div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-top:14px;width:100%;">
+        ↑ Upload to FastAPI
+      </button>
+    </form>
+  </div>
+
+</div>
+
+{# ── FastAPI connectivity check ────────────────────────── #}
+<div class="card" style="margin-top: 24px;">
+  <div class="card-title">FastAPI Status</div>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <div id="fastapi-status" style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">
+      Checking…
+    </div>
+    <button class="btn btn-ghost" onclick="checkFastAPI()" style="font-size:11px;">Refresh</button>
+  </div>
+  <div id="fastapi-url" style="font-size:11px;color:var(--text-dim);margin-top:4px;font-family:var(--mono);">
+    {{ fastapi_url }}
+  </div>
+</div>
+
+<script>
+  function showFile(input, targetId) {
+    const el = document.getElementById(targetId);
+    el.textContent = input.files[0] ? '✓ ' + input.files[0].name : '';
+  }
+
+  // Drag-and-drop visual feedback
+  ['revolut-zone', 'wise-zone'].forEach(id => {
+    const zone = document.getElementById(id);
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', ()  => zone.classList.remove('dragover'));
+    zone.addEventListener('drop',      ()  => zone.classList.remove('dragover'));
+  });
+
+  async function checkFastAPI() {
+    const el = document.getElementById('fastapi-status');
+    el.textContent = 'Checking…';
+    el.style.color = 'var(--text-dim)';
+    try {
+      const r = await fetch('/api/fastapi-health');
+      const d = await r.json();
+      if (d.status === 'ok') {
+        el.textContent = '● Online — HTTP ' + d.code;
+        el.style.color = 'var(--green)';
+      } else {
+        el.textContent = '● Unreachable — ' + (d.detail || 'unknown error');
+        el.style.color = 'var(--red)';
+      }
+    } catch(e) {
+      el.textContent = '● Error: ' + e.message;
+      el.style.color = 'var(--red)';
+    }
+  }
+
+  checkFastAPI();
+</script>
+{% endblock %}

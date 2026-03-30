@@ -1,0 +1,643 @@
+{% extends "base.html" %}
+{% block title %}Config — TravelNet{% endblock %}
+
+{% block head %}
+<style>
+  .config-group {
+    margin-bottom: 28px;
+  }
+  .config-group-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .config-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 16px;
+    align-items: center;
+  }
+  .config-row.overridden {
+    border-left: 3px solid var(--accent);
+  }
+  .config-row.dirty {
+    border-left: 3px solid var(--yellow);
+  }
+  .config-key {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-hi);
+  }
+  .config-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+  .config-type {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+  .config-input-wrap { position: relative; }
+  .config-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    color: var(--text-hi);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    outline: none;
+  }
+  .config-input:focus { border-color: var(--accent); }
+  .config-input.modified { border-color: var(--yellow); }
+  .config-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .config-default {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    margin-top: 4px;
+  }
+
+  /* Restart required banner (saved but not restarted) */
+  .restart-needed-banner {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 12px 20px;
+    align-items: center;
+    gap: 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    z-index: 99;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4);
+    display: none;
+  }
+  .restart-needed-banner.visible { display: flex; }
+
+  /* Unsaved changes banner */
+  .restart-banner {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--yellow);
+    border-radius: 8px;
+    padding: 12px 20px;
+    align-items: center;      /* ← keep this, remove display:flex */
+    gap: 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--yellow);
+    z-index: 100;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4);
+    display: none;            /* ← only one display declaration */
+  }
+  .restart-banner.visible { display: flex; }
+
+  /* Restart modal */
+  .restart-modal-bg {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.65); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .restart-modal-bg.open { display: flex; }
+  .restart-modal {
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 28px;
+    width: 380px;
+    max-width: 90vw;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .restart-modal h2 { color: var(--text-hi); font-size: 15px; margin-bottom: 10px; }
+  .restart-modal p  { color: var(--text-dim); font-size: 12px; margin-bottom: 18px; line-height: 1.6; }
+  .restart-status   { color: var(--accent); font-size: 12px; margin-top: 10px; min-height: 18px; }
+
+  .chip-input {
+    display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+    background: var(--bg); border: 1px solid var(--border2);
+    border-radius: var(--radius); padding: 6px 8px; min-height: 36px;
+    cursor: text;
+  }
+  .chip-input:focus-within { border-color: var(--accent); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--accent-lo); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 3px;
+    padding: 2px 6px; font-family: var(--mono); font-size: 11px;
+  }
+  .chip button {
+    background: none; border: none; color: var(--accent);
+    cursor: pointer; padding: 0; font-size: 13px; line-height: 1;
+  }
+  .chip button:hover { color: var(--red); }
+  .chip-text-input {
+    background: none; border: none; outline: none;
+    color: var(--text-hi); font-family: var(--mono); font-size: 12px;
+    padding: 2px 4px; min-width: 140px; flex: 1;
+  }
+
+  .dict-editor {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .dict-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    border-bottom: 1px solid var(--border);
+  }
+  .dict-row input {
+    background: none; border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-hi); font-family: var(--mono); font-size: 12px;
+    padding: 6px 10px; outline: none; width: 100%;
+  }
+  .dict-row input:focus { background: var(--surface); }
+  .dict-row input:last-of-type { border-right: none; }
+  .dict-remove {
+    background: none; border: none; color: var(--text-dim);
+    cursor: pointer; padding: 0 10px; font-size: 14px;
+  }
+  .dict-remove:hover { color: var(--red); }
+  .dict-add {
+    display: block; width: 100%; background: none; border: none;
+    border-top: 1px solid var(--border);
+    color: var(--accent); font-family: var(--mono); font-size: 11px;
+    padding: 6px 10px; cursor: pointer; text-align: left;
+  }
+  .dict-add:hover { background: var(--surface); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1>Config</h1>
+      <p>Edit server configuration. Changes require a server restart to take effect.</p>
+    </div>
+    <button class="btn btn-ghost restart-needs-btn" onclick="openRestartModal()">↺ Restart Server</button>
+  </div>
+</div>
+
+<div id="config-loading" style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">
+  Loading config…
+</div>
+<div id="config-content" style="display:none;"></div>
+
+{# ── Unsaved changes banner ────────────────────────────── #}
+<div class="restart-banner" id="restart-banner">
+  <span>⚠ Unsaved changes</span>
+  <button class="btn btn-ghost" style="font-size:11px;" onclick="saveAll()">Save all</button>
+  <button class="btn btn-ghost" style="font-size:11px;color:var(--text-dim);" onclick="discardAll()">Discard</button>
+</div>
+
+{# ── Restart required banner ───────────────────────────── #}
+<div class="restart-needed-banner" id="restart-needed-banner">
+  <span>↺ Restart required to apply changes</span>
+  <button class="btn btn-ghost" style="font-size:11px;" onclick="openRestartModal()">Restart now</button>
+  <button class="btn btn-ghost" style="font-size:11px;color:var(--text-dim);" onclick="dismissRestartBanner()">Dismiss</button>
+</div>
+
+{# ── Restart modal ─────────────────────────────────────── #}
+<div class="restart-modal-bg" id="restart-modal-bg" onclick="closeRestartModal(event)">
+  <div class="restart-modal">
+    <h2>↺ Restart Server</h2>
+    <p>This will restart the <code>travelnet</code> FastAPI container. Config overrides will be applied on startup. The container will be unavailable for a few seconds.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeRestartModal()">Cancel</button>
+      <button class="btn btn-primary" id="btn-do-restart" onclick="doRestart()">Restart</button>
+    </div>
+    <div class="restart-status" id="restart-status"></div>
+  </div>
+</div>
+
+<script>
+  const RESTART_KEY = 'tn_restart_needed';
+  let needsRestart = localStorage.getItem(RESTART_KEY) === '1';
+
+  let configData   = {};   // key → full entry from API
+  let pendingEdits = {};   // key → new value (unsaved)
+
+  function setNeedsRestart(val) {
+    needsRestart = val;
+    if (val) localStorage.setItem(RESTART_KEY, '1');
+    else     localStorage.removeItem(RESTART_KEY);
+    updateRestartNeededBanner();
+  }
+
+  function updateRestartNeededBanner() {
+    const banner = document.getElementById('restart-needed-banner');
+    banner.classList.toggle('visible', needsRestart);
+    // Shift up to avoid overlap when unsaved-changes banner is also visible
+    const unsavedVisible = document.getElementById('restart-banner').classList.contains('visible');
+    banner.style.bottom = (needsRestart && unsavedVisible) ? '88px' : '24px';
+  }
+
+  function dismissRestartBanner() {
+    setNeedsRestart(false);
+  }
+
+  // ── Type helpers ─────────────────────────────────────
+  function inputType(type) {
+    if (type === 'bool')     return 'checkbox';
+    if (type === 'int')      return 'number';
+    if (type === 'float')    return 'number';
+    if (type === 'datetime') return 'date';
+    return 'text';
+  }
+
+  function valueToInput(type, value) {
+    if (type === 'bool')        return value;
+    if (type === 'datetime')    return value ? value.split('T')[0].split(' ')[0] : '';
+    if (type.startsWith('list')) return Array.isArray(value) ? value.join(', ') : value;
+    return value ?? '';
+  }
+
+  function inputToValue(type, raw) {
+      if (type === 'bool')         return raw === true || raw === 'true';
+      if (type === 'int')          return parseInt(raw, 10);
+      if (type === 'float')        return parseFloat(raw);
+      if (type === 'datetime')     return raw;
+      if (type.startsWith('list')) {
+        // Read from chip DOM, not raw input
+        return raw;
+      }
+      return raw;
+  }
+
+  function getChipValues(key) {
+  const container = document.getElementById(`chips-${key}`);
+  if (!container) return [];
+  return [...container.querySelectorAll('.chip')].map(c => c.textContent.replace('×', '').trim());
+}
+
+function removeChip(key, btn) {
+  btn.parentElement.remove();
+  pendingEdits[key] = getChipValues(key);
+  document.getElementById(`row-${key}`).classList.add('dirty');
+  document.getElementById(`save-${key}`).style.display = 'inline-flex';
+  updateBanner();
+}
+
+function getDictValue(key) {
+  const result = {};
+  document.querySelectorAll(`#dict-${key} .dict-row`).forEach(row => {
+    const [k, v] = row.querySelectorAll('input');
+    if (k.value.trim()) result[k.value.trim()] = v.value;
+  });
+  return result;
+}
+
+function dictValueInputType(type) {
+  // type is e.g. "dict[str,datetime]", "dict[str,str]", "dict[str,int]"
+  const m = type.match(/^dict\[str,(\w+)\]$/);
+  const vt = m ? m[1] : 'str';
+  if (vt === 'datetime') return 'date';
+  if (vt === 'int' || vt === 'float') return 'number';
+  return 'text';
+}
+
+function dictChange(key) {
+  pendingEdits[key] = getDictValue(key);
+  document.getElementById(`row-${key}`).classList.add('dirty');
+  document.getElementById(`save-${key}`).style.display = 'inline-flex';
+  updateBanner();
+}
+
+function removeDictRow(key, btn) {
+  btn.closest('.dict-row').remove();
+  dictChange(key);
+}
+
+function addDictRow(key, k = '', v = '') {
+  const editor = document.getElementById(`dict-${key}`);
+  const valInputType = editor.dataset.valueType || 'text';
+  const addBtn = editor.querySelector('.dict-add');
+  const row = document.createElement('div');
+  row.className = 'dict-row';
+  row.innerHTML = `
+    <input type="text" value="${k.replace(/"/g,'&quot;')}" placeholder="key" oninput="dictChange('${key}')" />
+    <input type="${valInputType}" value="${v.replace(/"/g,'&quot;')}" placeholder="value" oninput="dictChange('${key}')" />
+    <button class="dict-remove" type="button" onclick="removeDictRow('${key}',this)">×</button>`;
+  editor.insertBefore(row, addBtn);
+}
+
+function chipKeydown(e, key) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault();
+    const val = e.target.value.trim();
+    if (!val) return;
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${val}<button type="button" onclick="removeChip('${key}', this)">×</button>`;
+    e.target.parentElement.insertBefore(chip, e.target);
+    e.target.value = '';
+    pendingEdits[key] = getChipValues(key);
+    document.getElementById(`row-${key}`).classList.add('dirty');
+    document.getElementById(`save-${key}`).style.display = 'inline-flex';
+    updateBanner();
+  }
+}
+
+  // ── Render ────────────────────────────────────────────
+  function renderConfig(data) {
+    configData = data;
+    const groups = {};
+    for (const [key, entry] of Object.entries(data)) {
+      const g = entry.group || 'general';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push([key, entry]);
+    }
+
+    const container = document.getElementById('config-content');
+    container.innerHTML = '';
+
+    for (const [group, entries] of Object.entries(groups)) {
+      const div = document.createElement('div');
+      div.className = 'config-group';
+      div.innerHTML = `<div class="config-group-title">${group}</div>`;
+
+      for (const [key, entry] of entries) {
+        const row = document.createElement('div');
+        row.className = 'config-row' + (entry.overridden ? ' overridden' : '');
+        row.id = `row-${key}`;
+
+        const isBool = entry.type === 'bool';
+        const inputVal = valueToInput(entry.type, entry.value);
+
+        let inputHtml;
+        if (isBool) {
+          inputHtml = `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" id="input-${key}" ${inputVal ? 'checked' : ''}
+                   onchange="markDirty('${key}')"
+                   style="width:auto;accent-color:var(--accent);" />
+            <span style="font-size:12px;color:var(--text-dim);">${inputVal ? 'true' : 'false'}</span>
+          </label>`;
+        } else if (entry.type.startsWith('list')) {
+          const items = Array.isArray(entry.value) ? entry.value : 
+            (entry.value ? String(entry.value).split(',').map(s => s.trim()).filter(Boolean) : []);
+          inputHtml = `<div class="chip-input" id="chips-${key}" data-key="${key}">
+            ${items.map(item => `
+              <span class="chip">${item}<button type="button" onclick="removeChip('${key}', this)">×</button></span>
+            `).join('')}
+            <input class="chip-text-input" placeholder="Add item, press Enter"
+                  onkeydown="chipKeydown(event, '${key}')" />
+          </div>`; 
+        } else if (entry.type.startsWith('dict')) {
+          const valType = dictValueInputType(entry.type);
+          const pairs = (entry.value && typeof entry.value === 'object') ? Object.entries(entry.value) : [];
+          inputHtml = `<div class="dict-editor" id="dict-${key}" data-value-type="${valType}">
+            ${pairs.map(([k, v]) => {
+              const displayVal = valType === 'date' ? (v ? String(v).split('T')[0] : '') : String(v);
+              return `<div class="dict-row">
+                <input type="text" value="${String(k).replace(/"/g,'&quot;')}" placeholder="key" oninput="dictChange('${key}')" />
+                <input type="${valType}" value="${displayVal.replace(/"/g,'&quot;')}" placeholder="value" oninput="dictChange('${key}')" />
+                <button class="dict-remove" type="button" onclick="removeDictRow('${key}',this)">×</button>
+              </div>`;
+            }).join('')}
+            <button class="dict-add" type="button" onclick="addDictRow('${key}')">+ Add entry</button>
+          </div>`;
+        } else {
+          inputHtml = `<input
+            class="config-input"
+            id="input-${key}"
+            type="${inputType(entry.type)}"
+            value="${String(inputVal).replace(/"/g, '&quot;')}"
+            ${entry.type === 'float' ? 'step="any"' : ''}
+            oninput="markDirty('${key}')"
+          />`;
+        }
+
+        const defaultJson = JSON.stringify(entry.default);
+        const truncated   = defaultJson.length > 60;
+        const displayStr  = truncated ? defaultJson.slice(0, 60) + '…' : defaultJson;
+        const defaultStr  = `<div class="config-default" 
+          title="${truncated ? 'Click to copy full default' : ''}"
+          style="${truncated ? 'cursor:pointer;' : ''}"
+          onclick="${truncated ? `copyDefault(${JSON.stringify(defaultJson)})` : ''}">
+          default: ${displayStr}
+        </div>`;
+
+        row.innerHTML = `
+          <div>
+            <div class="config-key">${key}</div>
+            <div class="config-desc">${entry.description || ''}</div>
+            <div class="config-type">${entry.type} · ${entry.module}</div>
+          </div>
+          <div class="config-input-wrap">
+            ${inputHtml}
+            ${defaultStr}
+          </div>
+          <div class="config-actions">
+            <button class="btn btn-primary" id="save-${key}"
+                    onclick="saveOne('${key}')"
+                    style="font-size:11px;padding:5px 12px;display:none;">
+              Save
+            </button>
+            ${entry.overridden ? `
+            <button class="btn btn-ghost" onclick="resetOne('${key}')"
+                    style="font-size:11px;padding:5px 10px;" title="Reset to default">
+              ↩
+            </button>` : ''}
+          </div>
+        `;
+        div.appendChild(row);
+      }
+      container.appendChild(div);
+    }
+
+    document.getElementById('config-loading').style.display = 'none';
+    container.style.display = 'block';
+  }
+
+  function copyDefault(text) {
+    navigator.clipboard.writeText(text).then(() => {
+      const toast = document.getElementById('restart-toast');
+      if (toast) {
+        toast.textContent = '✓ Copied to clipboard';
+        toast.style.display = 'block';
+        toast.style.borderColor = 'var(--green)';
+        toast.style.color = 'var(--green)';
+        setTimeout(() => { toast.style.display = 'none'; }, 2000);
+      }
+    });
+  }
+
+  // ── Dirty tracking ────────────────────────────────────
+  function markDirty(key) {
+    const entry = configData[key];
+    
+    // Lists and dicts are handled by their own functions directly
+    if (entry.type.startsWith('list') || entry.type.startsWith('dict')) return;
+    
+    const input = document.getElementById(`input-${key}`);
+    const raw   = entry.type === 'bool' ? input.checked : input.value;
+    const newVal = inputToValue(entry.type, raw);
+
+    pendingEdits[key] = newVal;
+    if (entry.type !== 'bool') input.classList.add('modified');
+    document.getElementById(`row-${key}`).classList.add('dirty');
+    document.getElementById(`save-${key}`).style.display = 'inline-flex';
+    updateBanner();
+}
+
+  function updateBanner() {
+    const banner = document.getElementById('restart-banner');
+    banner.classList.toggle('visible', Object.keys(pendingEdits).length > 0);
+    updateRestartNeededBanner();
+  }
+
+  // ── Save ──────────────────────────────────────────────
+  async function saveOne(key) {
+    const value = pendingEdits[key];
+    if (value === undefined) return;
+    try {
+      const resp = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ key, value }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) throw new Error(d.error || resp.statusText);
+      delete pendingEdits[key];
+      // Mark that a restart is needed
+      setNeedsRestart(true);
+      // Highlight the restart server button in the page header
+      document.querySelectorAll('.restart-needs-btn').forEach(b => {
+        b.style.borderColor = 'var(--yellow)';
+        b.style.color = 'var(--yellow)';
+      });
+      // Update local data
+      configData[key].value = value;
+      configData[key].overridden = true;
+      const input = document.getElementById(`input-${key}`);
+      if (input) input.classList.remove('modified');
+      document.getElementById(`row-${key}`).classList.remove('dirty');
+      document.getElementById(`row-${key}`).classList.add('overridden');
+      document.getElementById(`save-${key}`).style.display = 'none';
+      updateBanner();
+    } catch(e) {
+      alert(`Failed to save ${key}: ${e.message}`);
+    }
+  }
+
+  async function saveAll() {
+    for (const key of Object.keys(pendingEdits)) {
+      await saveOne(key);
+    }
+  }
+
+  function discardAll() {
+    pendingEdits = {};
+    loadConfig(); // re-render from server
+  }
+
+  // ── Reset to default ──────────────────────────────────
+  async function resetOne(key) {
+      try {
+        const resp = await fetch(`/api/config/${key}`, { method: 'DELETE' });
+        const d = await resp.json();
+        if (!resp.ok) throw new Error(d.error || resp.statusText);
+        delete pendingEdits[key];
+        // Patch local data
+        configData[key].value     = configData[key].default;
+        configData[key].overridden = false;
+        // Mark that a restart is needed
+        setNeedsRestart(true);
+        // Highlight restart button
+        document.querySelectorAll('.restart-needs-btn').forEach(b => {
+          b.style.borderColor = 'var(--yellow)';
+          b.style.color = 'var(--yellow)';
+        });
+        // Re-render from patched local data, not from server
+        renderConfig(configData);
+      } catch(e) {
+        alert(`Failed to reset ${key}: ${e.message}`);
+      }
+  }
+
+  // ── Restart ───────────────────────────────────────────
+  function openRestartModal() {
+    document.getElementById('restart-status').textContent = '';
+    document.getElementById('btn-do-restart').disabled = false;
+    document.getElementById('restart-modal-bg').classList.add('open');
+  }
+  function closeRestartModal(e) {
+    if (!e || e.target === document.getElementById('restart-modal-bg')) {
+      document.getElementById('restart-modal-bg').classList.remove('open');
+    }
+  }
+  async function doRestart() {
+    const status = document.getElementById('restart-status');
+    const btn    = document.getElementById('btn-do-restart');
+    btn.disabled = true;
+    status.textContent = 'Sending restart signal…';
+    try {
+      const resp = await fetch('/api/restart', { method: 'POST' });
+      const d    = await resp.json();
+      if (!resp.ok) throw new Error(d.error);
+      status.textContent = '✓ ' + d.message;
+      setNeedsRestart(false);
+      document.querySelectorAll('.restart-needs-btn').forEach(b => {
+        b.style.borderColor = '';
+        b.style.color = '';
+      });
+      setTimeout(() => closeRestartModal(), 2000);
+    } catch(e) {
+      status.textContent = '✗ ' + e.message;
+      btn.disabled = false;
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeRestartModal();
+  });
+
+  // ── Load ──────────────────────────────────────────────
+  async function loadConfig() {
+    document.getElementById('config-loading').style.display = 'block';
+    document.getElementById('config-content').style.display = 'none';
+    try {
+      const resp = await fetch('/api/config');
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      renderConfig(data);
+      console.log(data)
+    } catch(e) {
+      document.getElementById('config-loading').textContent = 'Failed to load config: ' + e.message;
+      document.getElementById('config-loading').style.color = 'var(--red)';
+    }
+  }
+
+  loadConfig();
+  updateRestartNeededBanner();
+</script>
+{% endblock %}

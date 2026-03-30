@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}Overview — TravelNet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Overview</h1>
+  <p>System health and quick stats — {{ now.strftime('%A %d %b %Y, %H:%M UTC') }}</p>
+</div>
+
+{# ── System health ─────────────────────────────────────── #}
+<div style="margin-bottom: 8px;">
+  <span class="card-title">System Health</span>
+</div>
+<div class="grid grid-4" style="margin-bottom: 24px;">
+  <div class="stat">
+    <div class="stat-label">CPU</div>
+    <div class="stat-value">{{ health.cpu_pct }}<span style="font-size:14px;color:var(--text-dim)">%</span></div>
+    <div class="stat-sub"></div>
+    <div class="progress-wrap">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill {% if health.cpu_pct > 80 %}danger{% elif health.cpu_pct > 60 %}warn{% endif %}"
+             style="width:{{ health.cpu_pct }}%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat">
+    <div class="stat-label">RAM</div>
+    <div class="stat-value">{{ health.ram_pct }}<span style="font-size:14px;color:var(--text-dim)">%</span></div>
+    <div class="stat-sub">{{ health.ram_used_gb }} / {{ health.ram_total_gb }} GB</div>
+    <div class="progress-wrap">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill {% if health.ram_pct > 85 %}danger{% elif health.ram_pct > 70 %}warn{% endif %}"
+             style="width:{{ health.ram_pct }}%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat">
+    <div class="stat-label">Disk (data)</div>
+    <div class="stat-value">{{ health.disk_pct }}<span style="font-size:14px;color:var(--text-dim)">%</span></div>
+    <div class="stat-sub">{{ health.disk_used_gb }} / {{ health.disk_total_gb }} GB</div>
+    <div class="progress-wrap">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill {% if health.disk_pct > 85 %}danger{% elif health.disk_pct > 70 %}warn{% endif %}"
+             style="width:{{ health.disk_pct }}%"></div>
+      </div>
+    </div>
+  </div>
+
+  {% if health.temps %}
+    {% for label, temp in health.temps.items() %}
+    <div class="stat">
+      <div class="stat-label">{{ label }}</div>
+      <div class="stat-value">{{ temp | round(1) }}<span style="font-size:14px;color:var(--text-dim)">°C</span></div>
+      <div class="stat-sub"></div>
+      <div class="progress-wrap">
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill {% if temp > 75 %}danger{% elif temp > 60 %}warn{% endif %}"
+               style="width:{{ [temp / 85 * 100, 100] | min }}%"></div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="stat">
+      <div class="stat-label">Temperature</div>
+      <div class="stat-value dim" style="font-size:16px;">N/A</div>
+    </div>
+  {% endif %}
+</div>
+
+{# ── API usage ─────────────────────────────────────────── #}
+{% if api_usage %}
+<div style="margin-bottom: 8px;"><span class="card-title">API Usage</span></div>
+<div class="card" style="margin-bottom: 24px;">
+  {% set services = [
+    ("exchangerate.host", 100),
+    ("open-meteo", 300000),
+  ] %}
+  {% for service_name, limit in services %}
+    {% set svc = api_usage.get(service_name) %}
+    {% if svc %}
+    <div style="margin-bottom: 16px;">
+      <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:8px;">
+        {{ service_name }}
+      </div>
+      <div class="grid grid-3" style="margin-bottom:8px;">
+        <div>
+          <div class="stat-label">Calls this month</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ svc.get('count', '—') }}
+          </div>
+        </div>
+        <div>
+          <div class="stat-label">Month</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ svc.get('month', '—') }}
+          </div>
+        </div>
+        <div>
+          <div class="stat-label">Monthly limit</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ limit | string }}
+          </div>
+        </div>
+      </div>
+      {% set calls = svc.get('count', 0) | int %}
+      {% set pct   = (calls / limit * 100) | round(1) %}
+      <div class="progress-bar-bg" style="height:6px;">
+        <div class="progress-bar-fill {% if pct > 85 %}danger{% elif pct > 65 %}warn{% endif %}"
+             style="width:{{ pct }}%"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">{{ pct }}% of monthly quota used</div>
+    </div>
+    {% if not loop.last %}<hr style="border:none;border-top:1px solid var(--border);margin:8px 0 16px;">{% endif %}
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── FastAPI status (loaded async) ────────────────────── #}
+<div style="margin-bottom: 8px; display:flex; align-items:center; gap:12px;">
+  <span class="card-title">Server Status</span>
+  <span id="status-loading" style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">Loading…</span>
+</div>
+
+<div class="grid grid-4" style="margin-bottom: 24px;" id="uptime-cards">
+  <div class="stat">
+    <div class="stat-label">Pi Uptime</div>
+    <div class="stat-value" id="stat-pi-uptime" style="font-size:18px;">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">App Uptime</div>
+    <div class="stat-value" id="stat-app-uptime" style="font-size:18px;">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">DB Size</div>
+    <div class="stat-value" id="stat-db-size" style="font-size:18px;">—</div>
+    <div class="stat-sub" id="stat-db-latency"></div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Pending Digest</div>
+    <div class="stat-value" id="stat-pending" style="font-size:18px;">—</div>
+    <div class="stat-sub">undigested warnings</div>
+  </div>
+</div>
+
+<div style="margin-bottom: 8px;"><span class="card-title">Last Upload</span></div>
+<div class="card" style="margin-bottom: 24px;">
+  <div class="table-wrap">
+    <table id="last-upload-table">
+      <thead><tr>
+        <th>Source</th>
+        <th>Last Upload</th>
+        <th>Time Since</th>
+      </tr></thead>
+      <tbody id="last-upload-body">
+        <tr><td colspan="3" class="dim" style="font-family:var(--mono);">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── DB table overview ─────────────────────────────────── #}
+<div style="margin-bottom: 8px;"><span class="card-title">Database Tables</span></div>
+<div class="card" style="margin-bottom: 24px;">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Table</th>
+        <th>Rows</th>
+        <th>Resettable</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        {% for t in tables %}
+        <tr>
+          <td>{{ t.name }}</td>
+          <td>{{ t.count }}</td>
+          <td>
+            {% if t.resettable %}
+              <span class="badge badge-yellow">yes</span>
+            {% else %}
+              <span class="badge badge-dim">no</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('db_table', table=t.name) }}" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;">view</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Recent log digest ─────────────────────────────────── #}
+{% if recent_logs %}
+<div style="margin-bottom: 8px;"><span class="card-title">Recent Log Events</span></div>
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Level</th>
+        <th>Logger</th>
+        <th>Message</th>
+        <th>Time</th>
+      </tr></thead>
+      <tbody>
+        {% for row in recent_logs %}
+        <tr>
+          <td>
+            {% set lvl = row.get('levelname', row.get('level', '')) %}
+            {% if lvl == 'ERROR' or lvl == 'CRITICAL' %}
+              <span class="badge badge-red">{{ lvl }}</span>
+            {% elif lvl == 'WARNING' %}
+              <span class="badge badge-yellow">{{ lvl }}</span>
+            {% else %}
+              <span class="badge badge-dim">{{ lvl }}</span>
+            {% endif %}
+          </td>
+          <td class="dim">{{ row.get('name', row.get('logger', '—')) }}</td>
+          <td>{{ row.get('message', row.get('msg', '—'))[:120] }}</td>
+          <td class="dim">{{ row.get('ts', row.get('created', row.get('timestamp', '—'))) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── Backup summary (loaded async) ───────────────────── #}
+<div style="margin-bottom: 8px; display:flex; align-items:center; gap:12px;">
+  <span class="card-title">Backups</span>
+  <span id="backup-loading" style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">Loading…</span>
+  <a href="{{ url_for('backups_page') }}" class="btn btn-ghost" style="margin-left:auto;font-size:11px;padding:4px 10px;">
+    View all →
+  </a>
+</div>
+<div class="card" style="margin-bottom: 24px;">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Source</th>
+        <th>Status</th>
+        <th>Latest</th>
+      </tr></thead>
+      <tbody id="backup-summary-body">
+        <tr><td colspan="3" class="dim" style="font-family:var(--mono);">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const SOURCE_LABELS = {
+    location_shortcuts: "Location (Shortcuts)",
+    location_overland:  "Location (Overland)",
+    health:             "Health",
+    transactions:       "Transactions",
+    fx_rates:           "FX Rates",
+    workouts:           "Workouts",
+  };
+
+  function timeSince(ts) {
+    if (!ts) return '—';
+    // Handle both Unix int and ISO string
+    const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    const mins = Math.floor((Date.now() - d) / 60000);
+    if (isNaN(mins)) return '—';
+    if (mins < 60)    return mins + 'm ago';
+    if (mins < 1440)  return Math.floor(mins / 60) + 'h ago';
+    return Math.floor(mins / 1440) + 'd ago';
+  }
+
+  function staleClass(ts) {
+    if (!ts) return 'badge-red';
+    const d    = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    const hrs  = (Date.now() - d) / 3600000;
+    if (hrs > 48) return 'badge-red';
+    if (hrs > 25) return 'badge-yellow';
+    return 'badge-green';
+  }
+
+  async function loadStatus() {
+    try {
+      const resp = await fetch('/api/status');
+      const d    = await resp.json();
+      if (d.error) throw new Error(d.error);
+
+      // Uptime
+      document.getElementById('stat-pi-uptime').textContent  = d.uptime?.pi  || '—';
+      document.getElementById('stat-app-uptime').textContent = d.uptime?.app || '—';
+
+      // DB stats
+      const db = d.db || {};
+      document.getElementById('stat-db-size').textContent    = db.size_mb ? db.size_mb + ' MB' : '—';
+      document.getElementById('stat-db-latency').textContent = db.query_latency_ms ? db.query_latency_ms + 'ms latency' : '';
+
+      // Pending digest
+      const pending = d.pending_digest_records ?? '—';
+      const pendEl  = document.getElementById('stat-pending');
+      pendEl.textContent = pending;
+      pendEl.style.color = pending > 0 ? 'var(--yellow)' : 'var(--green)';
+
+      // Last uploads
+      const uploads = d.last_upload || {};
+      const tbody   = document.getElementById('last-upload-body');
+      const rows    = Object.entries(SOURCE_LABELS).map(([key, label]) => {
+        const ts    = uploads[key];
+        const badge = staleClass(ts);
+        const since = timeSince(ts);
+        const tsStr = ts ? (typeof ts === 'number'
+          ? new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+          : ts)
+          : '—';
+        return `<tr>
+          <td style="color:var(--text-hi);">${label}</td>
+          <td class="dim">${tsStr}</td>
+          <td><span class="badge ${badge}">${since}</span></td>
+        </tr>`;
+      });
+      tbody.innerHTML = rows.join('');
+
+      document.getElementById('status-loading').textContent = '';
+    } catch(e) {
+      document.getElementById('status-loading').textContent = 'Status unavailable: ' + e.message;
+      document.getElementById('status-loading').style.color = 'var(--red)';
+      document.getElementById('last-upload-body').innerHTML =
+        '<tr><td colspan="3" class="dim" style="font-family:var(--mono);">Could not reach FastAPI</td></tr>';
+    }
+  }
+
+  loadStatus();
+
+  // ── Backup summary ────────────────────────────────────
+
+  function backupAge(ts) {
+    if (!ts) return null;
+    return Math.floor(Date.now() / 1000) - ts;
+  }
+
+  function backupBadge(info, staleDays) {
+    if (!info) return '<span class="badge badge-dim">No backup</span>';
+    if (info.error) return `<span class="badge badge-red">Error</span>`;
+    const age = backupAge(info.modified_ts);
+    if (age > staleDays * 86400) return `<span class="badge badge-red">⚠ Stale</span>`;
+    return `<span class="badge badge-green">✓ OK</span>`;
+  }
+
+  function backupSub(info) {
+    if (!info || info.error) return info?.error || '—';
+    return `${info.modified} · ${info.size_mb} MB`;
+  }
+
+  async function loadBackups() {
+    try {
+      const resp = await fetch('/api/backups');
+      const d    = await resp.json();
+      if (d.error) throw new Error(d.error);
+
+      const local  = d.local  || {};
+      const remote = d.remote || null;
+
+      const STALE_DAYS = d.stale_days ?? 7;
+      console.log(STALE_DAYS)
+
+      const rows = [
+        { label: 'DB (local)',    info: local.db },
+        { label: 'DB (remote)',   info: remote },
+        { label: 'Health',        info: local.health },
+        { label: 'Workouts',      info: local.workouts },
+        { label: 'Location (Shortcuts)',      info: local.location?.shortcut || local.location },
+        { label: 'Location (Overland)',      info: local.location?.overland || local.location },
+        { label: 'Revolut',       info: local.revolut },
+        { label: 'Wise',          info: local.wise },
+        { label: 'FX',            info: local.fx },
+      ];
+
+      const tbody = document.getElementById('backup-summary-body');
+      tbody.innerHTML = rows.map(({ label, info }) => `
+        <tr>
+          <td style="color:var(--text-hi);">${label}</td>
+          <td>${backupBadge(info, STALE_DAYS)}</td>
+          <td class="dim" style="font-size:11px;">${backupSub(info)}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('backup-loading').textContent = '';
+    } catch(e) {
+      document.getElementById('backup-loading').textContent = 'Unavailable: ' + e.message;
+      document.getElementById('backup-loading').style.color = 'var(--red)';
+    }
+  }
+
+  loadBackups();
+</script>
+{% endblock %}

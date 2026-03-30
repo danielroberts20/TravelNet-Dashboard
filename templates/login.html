@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TravelNet — Login</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0f14; --surface: #141720; --border: #1e2330;
+      --text: #c8cfe0; --text-dim: #5a6480; --text-hi: #e8edf8;
+      --accent: #3d8ef0; --red: #e05252; --red-lo: rgba(224,82,82,.12);
+      --mono: 'IBM Plex Mono', monospace; --sans: 'IBM Plex Sans', sans-serif;
+    }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: var(--sans); font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+    }
+    .login-box {
+      width: 340px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 36px 32px;
+    }
+    .login-logo {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-hi);
+      margin-bottom: 4px;
+    }
+    .login-sub {
+      font-size: 12px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 28px;
+    }
+    label { font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 6px; letter-spacing: .06em; text-transform: uppercase; }
+    input[type="password"] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid #1e2330;
+      color: var(--text-hi);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 16px;
+    }
+    input[type="password"]:focus { border-color: var(--accent); }
+    button {
+      width: 100%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      letter-spacing: .04em;
+    }
+    button:hover { opacity: .88; }
+    .error {
+      background: var(--red-lo);
+      border: 1px solid var(--red);
+      color: var(--red);
+      border-radius: 5px;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-family: var(--mono);
+      margin-bottom: 16px;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: center;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <div class="login-logo">TravelNet</div>
+    <div class="login-sub">Admin Dashboard</div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="error">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST">
+      <label for="password">Token</label>
+      <input type="password" id="modal-password-input" name="token" autocomplete="off"
+       oninput="syncConfirm()" />
+      <button type="submit">Enter</button>
+    </form>
+    <p class="hint">Tailscale-only access</p>
+  </div>
+</body>
+</html>

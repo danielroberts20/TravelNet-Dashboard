@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Backups — TravelNet{% endblock %}
+
+{% block head %}
+<style>
+  .backup-section {
+    margin-bottom: 28px;
+  }
+  .backup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 10px;
+    display: grid;
+    grid-template-columns: 180px 1fr auto;
+    align-items: center;
+    gap: 16px;
+  }
+  .backup-card.stale  { border-left: 3px solid var(--red); }
+  .backup-card.ok     { border-left: 3px solid var(--green); }
+  .backup-card.empty  { border-left: 3px solid var(--border2); }
+  .backup-card.error  { border-left: 3px solid var(--red); }
+  .backup-label { font-family: var(--mono); font-size: 13px; color: var(--text-hi); }
+  .backup-meta  { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-family: var(--mono); }
+  .backup-count { font-size: 11px; color: var(--text-dim); font-family: var(--mono); text-align: right; }
+  @media (max-width: 600px) {
+    .backup-card { grid-template-columns: 1fr; }
+    .backup-count { text-align: left; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1>Backups</h1>
+      <p>Local and remote backup status. Stale threshold: 7 days.</p>
+    </div>
+    <button class="btn btn-ghost" onclick="loadBackups()">↺ Refresh</button>
+  </div>
+</div>
+
+<div id="backup-loading" style="font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-bottom:16px;">
+  Loading…
+</div>
+
+{# ── Remote ───────────────────────────────────────────── #}
+<div class="backup-section">
+  <div style="margin-bottom:8px;"><span class="card-title">Remote (Cloudflare R2)</span></div>
+  <div id="section-remote"></div>
+</div>
+
+{# ── Local DB ─────────────────────────────────────────── #}
+<div class="backup-section">
+  <div style="margin-bottom:8px;"><span class="card-title">Local — Database</span></div>
+  <div id="section-db"></div>
+</div>
+
+{# ── Local uploads ────────────────────────────────────── #}
+<div class="backup-section">
+  <div style="margin-bottom:8px;"><span class="card-title">Local — Uploads</span></div>
+  <div id="section-uploads"></div>
+</div>
+
+<script>
+  function cardClass(info) {
+    if (!info)             return 'empty';
+    if (info.error)        return 'error';
+    if (info.stale)        return 'stale';
+    return 'ok';
+  }
+
+  function statusBadge(info) {
+    if (!info)      return '<span class="badge badge-dim">No backup</span>';
+    if (info.error) return '<span class="badge badge-red">Error</span>';
+    if (info.stale) return '<span class="badge badge-red">⚠ Stale</span>';
+    return '<span class="badge badge-green">✓ OK</span>';
+  }
+
+  function timeSince(ts) {
+    if (!ts) return '—';
+    const secs = Math.floor(Date.now() / 1000) - ts;
+    const days = Math.floor(secs / 86400);
+    const hrs  = Math.floor((secs % 86400) / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    if (days > 0)  return `${days}d ${hrs}h ago`;
+    if (hrs > 0)   return `${hrs}h ${mins}m ago`;
+    return `${mins}m ago`;
+  }
+
+  function renderCard(label, info) {
+    const cls = cardClass(info);
+    if (!info) {
+      return `<div class="backup-card empty">
+        <div><div class="backup-label">${label}</div></div>
+        <div class="dim" style="font-family:var(--mono);font-size:12px;">No backup found</div>
+        <div></div>
+      </div>`;
+    }
+    if (info.error) {
+      return `<div class="backup-card error">
+        <div><div class="backup-label">${label}</div></div>
+        <div style="font-family:var(--mono);font-size:12px;color:var(--red);">${info.error}</div>
+        <div></div>
+      </div>`;
+    }
+    return `<div class="backup-card ${cls}">
+      <div>
+        <div class="backup-label">${label}</div>
+        <div class="backup-meta">${info.filename}</div>
+      </div>
+      <div>
+        ${statusBadge(info)}
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-left:10px;">
+          ${info.modified} · ${timeSince(info.modified_ts)}
+        </span>
+        <div class="backup-meta" style="margin-top:4px;">${info.size_mb} MB</div>
+      </div>
+      <div class="backup-count">${info.count} backup${info.count !== 1 ? 's' : ''} stored</div>
+    </div>`;
+  }
+
+  async function loadBackups() {
+    const loadEl = document.getElementById('backup-loading');
+    loadEl.textContent = 'Loading…';
+    loadEl.style.color = 'var(--text-dim)';
+
+    try {
+      const resp = await fetch('/api/backups');
+      const d    = await resp.json();
+      if (d.error) throw new Error(d.error);
+
+      const local  = d.local  || {};
+      const remote = d.remote || null;
+
+      const STALE_DAYS = d.stale_days ?? 7;
+
+      // Update subtitle with actual configured value
+      document.querySelector('.page-header p').textContent =
+        `Local and remote backup status. Stale threshold: ${STALE_DAYS} days.`;
+
+      // Remote
+      document.getElementById('section-remote').innerHTML =
+        renderCard('Cloudflare R2 (DB)', remote);
+
+      // Local DB
+      document.getElementById('section-db').innerHTML =
+        renderCard('Database', local.db);
+
+      // Local uploads
+      const uploads = [
+        { label: 'Health',    info: local.health },
+        { label: 'Workouts',  info: local.workouts },
+        { label: 'Location (Shortcuts)', info: local.location?.shortcut || local.location },
+        { label: 'Location (Overland)', info: local.location?.overland || local.location },
+        { label: 'Revolut',   info: local.revolut },
+        { label: 'Wise',      info: local.wise },
+        { label: 'FX Rates',  info: local.fx },
+      ];
+      document.getElementById('section-uploads').innerHTML =
+        uploads.map(({ label, info }) => renderCard(label, info)).join('');
+
+      loadEl.textContent = '';
+    } catch(e) {
+      loadEl.textContent = 'Failed to load: ' + e.message;
+      loadEl.style.color = 'var(--red)';
+    }
+  }
+
+  loadBackups();
+</script>
+{% endblock %}

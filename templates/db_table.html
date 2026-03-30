@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}{{ table }} — Database — TravelNet{% endblock %}
+
+{% block head %}
+<style>
+  /* ── Toolbar ───────────────────────────────────────────── */
+  .browse-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .browse-toolbar select {
+    background: var(--surface); border: 1px solid var(--border2);
+    color: var(--text-hi); border-radius: 5px;
+    padding: 6px 10px; font-family: var(--mono); font-size: 12px;
+    width: auto; outline: none; cursor: pointer;
+  }
+  .browse-toolbar select:focus { border-color: var(--accent); }
+  .toolbar-sep { color: var(--border2); }
+
+  /* ── Column metadata panel ─────────────────────────────── */
+  .schema-panel {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .schema-toggle {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    user-select: none; border: none; background: none;
+    width: 100%; text-align: left;
+  }
+  .schema-toggle:hover { color: var(--text-hi); background: rgba(255,255,255,.02); }
+  .schema-toggle .arrow { transition: transform .2s; display: inline-block; }
+  .schema-toggle.open .arrow { transform: rotate(90deg); }
+  .schema-body {
+    display: none;
+    padding: 0 16px 14px;
+  }
+  .schema-body.open { display: block; }
+  .schema-body table th { font-size: 10px; }
+  .schema-body table td { font-size: 12px; padding: 7px 10px; }
+
+  /* ── Data table ────────────────────────────────────────── */
+  .data-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .data-table-wrap table { margin: 0; }
+  .data-table-wrap th {
+    position: sticky; top: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border2);
+    white-space: nowrap;
+  }
+  th.sortable { cursor: pointer; }
+  th.sortable:hover { color: var(--text-hi); background: #1a1f2e; }
+  th.sort-active { color: var(--accent); }
+  .sort-icon { font-size: 10px; margin-left: 4px; opacity: .6; }
+
+  td { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.null-cell { color: var(--text-dim); font-style: italic; }
+  td:hover { white-space: normal; word-break: break-all; }  /* expand on hover */
+
+  /* ── Pagination ────────────────────────────────────────── */
+  .pagination {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 16px; flex-wrap: wrap;
+  }
+  .pagination a, .pagination span {
+    font-family: var(--mono); font-size: 12px;
+    padding: 5px 10px; border-radius: 4px;
+    border: 1px solid var(--border2);
+    color: var(--text-dim); text-decoration: none;
+    transition: background .15s, color .15s;
+  }
+  .pagination a:hover { background: var(--accent-lo); color: var(--accent); border-color: var(--accent); }
+  .pagination span.current { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .pagination span.disabled { opacity: .3; cursor: default; }
+  .pagination-info {
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  /* ── Reset modal ───────────────────────────────────────── */
+  .reset-modal-bg {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .reset-modal-bg.open { display: flex; }
+  .reset-modal {
+    background: var(--surface); border: 1px solid var(--red);
+    border-radius: 8px; padding: 28px 28px 24px;
+    width: 380px; max-width: 90vw;
+  }
+  .reset-modal h2 { font-family: var(--mono); font-size: 15px; color: var(--red); margin-bottom: 10px; }
+  .reset-modal p  { font-size: 13px; color: var(--text-dim); margin-bottom: 16px; line-height: 1.5; }
+  .reset-modal input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border2);
+    color: var(--text-hi); border-radius: 5px; padding: 8px 10px;
+    font-family: var(--mono); font-size: 13px; outline: none; margin-bottom: 14px;
+  }
+  .reset-modal input:focus { border-color: var(--red); }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{# ── Breadcrumb + header ───────────────────────────────── #}
+<div class="page-header">
+  <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">
+    <a href="{{ url_for('db_view') }}" style="color:var(--text-dim);text-decoration:none;">Database</a>
+    <span style="margin:0 6px;">›</span>
+    <span style="color:var(--text-hi);font-family:var(--mono);">{{ table }}</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1>{{ table }}</h1>
+      <p>{{ total }} rows · {{ columns | length }} columns</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a href="{{ url_for('db_table_download', table=table) }}" class="btn btn-ghost">
+        ↓ Download CSV
+      </a>
+      {% if resettable %}
+      <button class="btn btn-danger" onclick="openModal()" style="font-size:11px;">
+        ⚠ Reset table
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Column schema ─────────────────────────────────────── #}
+<div class="schema-panel">
+  <button class="schema-toggle" id="schema-toggle" onclick="toggleSchema()">
+    <span class="arrow">▶</span>
+    Schema — {{ columns | length }} columns
+  </button>
+  <div class="schema-body" id="schema-body">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Name</th><th>Type</th><th>Not Null</th><th>Default</th><th>PK</th>
+      </tr></thead>
+      <tbody>
+        {% for col in columns %}
+        <tr>
+          <td class="dim">{{ col.cid }}</td>
+          <td style="color:var(--text-hi);">
+            {{ col.name }}
+            {% if col.pk %}&nbsp;<span class="badge badge-blue" style="font-size:10px;">PK</span>{% endif %}
+          </td>
+          <td><span class="badge badge-dim">{{ col.type }}</span></td>
+          <td>
+            {% if col.notnull %}
+              <span class="badge badge-green" style="font-size:10px;">NOT NULL</span>
+            {% else %}
+              <span class="dim">nullable</span>
+            {% endif %}
+          </td>
+          <td class="dim">{{ col.default if col.default is not none else '—' }}</td>
+          <td>{% if col.pk %}<span style="color:var(--accent);">✓</span>{% else %}<span class="dim">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Toolbar: page size + sort ─────────────────────────── #}
+<div class="browse-toolbar">
+  <span style="font-size:12px;color:var(--text-dim);font-family:var(--mono);">Rows per page:</span>
+  <select id="page-size-select" onchange="changePageSize(this.value)">
+    {% for ps in [25, 50, 100, 250, 500] %}
+      <option value="{{ ps }}" {% if ps == page_size %}selected{% endif %}>{{ ps }}</option>
+    {% endfor %}
+  </select>
+
+  <span class="toolbar-sep">·</span>
+
+  <span style="font-size:12px;color:var(--text-dim);font-family:var(--mono);">Sort by:</span>
+  <select id="order-select" onchange="changeOrder(this.value)">
+    <option value="rowid" {% if order == 'rowid' %}selected{% endif %}>rowid</option>
+    {% for col in columns %}
+      <option value="{{ col.name }}" {% if order == col.name %}selected{% endif %}>{{ col.name }}</option>
+    {% endfor %}
+  </select>
+  <select id="dir-select" onchange="changeDir(this.value)">
+    <option value="desc" {% if direction == 'desc' %}selected{% endif %}>DESC</option>
+    <option value="asc"  {% if direction == 'asc'  %}selected{% endif %}>ASC</option>
+  </select>
+</div>
+
+{# ── Data table ────────────────────────────────────────── #}
+{% if rows %}
+<div class="data-table-wrap">
+  <table>
+    <thead><tr>
+      {% for col in columns %}
+      <th class="sortable {% if order == col.name %}sort-active{% endif %}"
+          onclick="sortBy('{{ col.name }}')">
+        {{ col.name }}
+        {% if order == col.name %}
+          <span class="sort-icon">{% if direction == 'desc' %}↓{% else %}↑{% endif %}</span>
+        {% endif %}
+      </th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        {% for cell in row %}
+          {% if cell is none %}
+            <td class="null-cell">NULL</td>
+          {% else %}
+            <td title="{{ cell }}">{{ cell }}</td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ── Pagination ────────────────────────────────────────── #}
+<div class="pagination">
+  {% set prev_page = page - 1 %}
+  {% set next_page = page + 1 %}
+
+  {% if page > 1 %}
+    <a href="{{ url_for('db_table', table=table, page=1, page_size=page_size, order=order, dir=direction) }}">«</a>
+    <a href="{{ url_for('db_table', table=table, page=prev_page, page_size=page_size, order=order, dir=direction) }}">‹ Prev</a>
+  {% else %}
+    <span class="disabled">«</span>
+    <span class="disabled">‹ Prev</span>
+  {% endif %}
+
+  {# Show a window of pages around the current page #}
+  {% set window = 3 %}
+  {% set start  = [1, page - window] | max %}
+  {% set end    = [total_pages, page + window] | min %}
+
+  {% if start > 1 %}<span class="disabled">…</span>{% endif %}
+
+  {% for p in range(start, end + 1) %}
+    {% if p == page %}
+      <span class="current">{{ p }}</span>
+    {% else %}
+      <a href="{{ url_for('db_table', table=table, page=p, page_size=page_size, order=order, dir=direction) }}">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+
+  {% if end < total_pages %}<span class="disabled">…</span>{% endif %}
+
+  {% if page < total_pages %}
+    <a href="{{ url_for('db_table', table=table, page=next_page, page_size=page_size, order=order, dir=direction) }}">Next ›</a>
+    <a href="{{ url_for('db_table', table=table, page=total_pages, page_size=page_size, order=order, dir=direction) }}">»</a>
+  {% else %}
+    <span class="disabled">Next ›</span>
+    <span class="disabled">»</span>
+  {% endif %}
+
+  <span class="pagination-info">
+    {{ (page - 1) * page_size + 1 }}–{{ [(page * page_size), total] | min }} of {{ total }}
+  </span>
+</div>
+
+{% else %}
+<div class="card">
+  <p style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">(no rows)</p>
+</div>
+{% endif %}
+
+{# ── Reset modal ───────────────────────────────────────── #}
+{% if resettable %}
+<div class="reset-modal-bg" id="reset-modal-bg" onclick="closeModal(event)">
+  <div class="reset-modal">
+    <h2>⚠ Reset table</h2>
+    <p>
+      Permanently delete all rows from
+      <strong style="color:var(--text-hi);font-family:var(--mono);">{{ table }}</strong>.
+      This cannot be undone.
+    </p>
+    <form method="POST" action="{{ url_for('db_reset', table=table) }}">
+      <input type="hidden" name="confirm_table" id="modal-confirm-input" value="" />
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">Type the table name to confirm:</div>
+      <input type="text" id="modal-type-input" placeholder="{{ table }}" autocomplete="off"
+            oninput="syncConfirm()" style="margin-bottom:14px;" />
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-danger" id="modal-submit" disabled>Delete all rows</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<script>
+  // ── Schema toggle ─────────────────────────────────────
+  function toggleSchema() {
+    const toggle = document.getElementById('schema-toggle');
+    const body   = document.getElementById('schema-body');
+    toggle.classList.toggle('open');
+    body.classList.toggle('open');
+  }
+
+  // ── URL helpers ───────────────────────────────────────
+  function currentParams() {
+    return new URLSearchParams(window.location.search);
+  }
+  function navigate(params) {
+    window.location.href = window.location.pathname + '?' + params.toString();
+  }
+
+  function changePageSize(val) {
+    const p = currentParams();
+    p.set('page_size', val);
+    p.set('page', '1');
+    navigate(p);
+  }
+  function changeOrder(val) {
+    const p = currentParams();
+    p.set('order', val);
+    p.set('page', '1');
+    navigate(p);
+  }
+  function changeDir(val) {
+    const p = currentParams();
+    p.set('dir', val);
+    p.set('page', '1');
+    navigate(p);
+  }
+  function sortBy(col) {
+    const p = currentParams();
+    if (p.get('order') === col) {
+      p.set('dir', p.get('dir') === 'asc' ? 'desc' : 'asc');
+    } else {
+      p.set('order', col);
+      p.set('dir', 'desc');
+    }
+    p.set('page', '1');
+    navigate(p);
+  }
+
+  // ── Reset modal ───────────────────────────────────────
+  const TARGET = {{ table | tojson }};
+  function openModal() {
+      document.getElementById('modal-type-input').value = '';
+      document.getElementById('modal-confirm-input').value = '';
+      document.getElementById('modal-submit').disabled = true;
+      document.getElementById('reset-modal-bg').classList.add('open');
+      setTimeout(() => document.getElementById('modal-type-input').focus(), 80);
+  }
+  function closeModal(e) {
+    if (!e || e.target === document.getElementById('reset-modal-bg')) {
+      document.getElementById('reset-modal-bg').classList.remove('open');
+    }
+  }
+  function syncConfirm() {
+    const val = document.getElementById('modal-type-input').value;
+    document.getElementById('modal-confirm-input').value = val;
+    document.getElementById('modal-submit').disabled = (val !== TARGET);
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+{% endblock %}

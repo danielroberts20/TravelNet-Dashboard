@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Location — TravelNet{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  #map {
+    height: 520px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .map-legend {
+    display: flex; gap: 20px; align-items: center;
+    margin-top: 12px; flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+  }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+  .legend-line {
+    width: 24px; height: 3px; border-radius: 2px; flex-shrink: 0;
+  }
+  .map-stats {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .map-stat {
+    font-family: var(--mono); font-size: 12px;
+  }
+  .map-stat .val { color: var(--text-hi); font-size: 18px; display: block; }
+  .map-stat .lbl { color: var(--text-dim); font-size: 11px; }
+  .loading-overlay {
+    position: absolute; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    font-family: var(--mono); font-size: 13px; color: var(--text-dim);
+    z-index: 1000;
+  }
+  .map-wrap { position: relative; }
+  .leaflet-container {
+      z-index: 1;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1>Location</h1>
+      <p>48 hours ending at selected date — Overland (blue) and Shortcuts (orange)</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <input type="date" id="date-picker"
+             style="background:var(--surface);border:1px solid var(--border2);color:var(--text-hi);
+                    border-radius:5px;padding:6px 10px;font-family:var(--mono);font-size:12px;
+                    outline:none;cursor:pointer;"
+             onchange="loadPoints()" />
+      <button class="btn btn-ghost" id="btn-today" onclick="goToToday()">Today</button>
+    <button class="btn btn-ghost" id="btn-refresh" onclick="loadPoints()">↺ Refresh</button>
+  </div>
+</div>
+</div>
+
+{# ── Stats row ─────────────────────────────────────────── #}
+<div class="map-stats" id="map-stats" style="display:none;">
+  <div class="map-stat">
+    <span class="val" id="stat-overland">—</span>
+    <span class="lbl">Overland points</span>
+  </div>
+  <div class="map-stat">
+    <span class="val" id="stat-shortcuts">—</span>
+    <span class="lbl">Shortcuts points</span>
+  </div>
+  <div class="map-stat">
+    <span class="val" id="stat-latest">—</span>
+    <span class="lbl">Latest point</span>
+  </div>
+  <div class="map-stat">
+    <span class="val" id="stat-gap">—</span>
+    <span class="lbl">Since last point</span>
+  </div>
+</div>
+
+{# ── Map ───────────────────────────────────────────────── #}
+<div class="map-wrap">
+  <div class="loading-overlay" id="map-loading">Loading points…</div>
+  <div id="map"></div>
+</div>
+
+<div class="map-legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#3d8ef0;"></div> Overland
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#f0913d;"></div> Shortcuts
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background:#3d8ef0;opacity:.6;"></div> Overland path
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background:#f0913d;opacity:.6;"></div> Shortcuts path
+  </div>
+  <div class="legend-item" style="margin-left:auto;">
+    <div class="legend-dot" style="background:#34c47c;border:2px solid #fff;"></div> Most recent
+  </div>
+</div>
+
+<script>
+  // ── Map init ─────────────────────────────────────────
+  const map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Default view — will be overridden once points load
+  map.setView([51.5, -0.1], 10);
+
+  const BLUE   = '#3d8ef0';
+  const ORANGE = '#f0913d';
+  const GREEN  = '#34c47c';
+
+  function makeCircle(lat, lon, color, radius, tooltip) {
+    return L.circleMarker([lat, lon], {
+      radius:      radius,
+      color:       color,
+      fillColor:   color,
+      fillOpacity: 0.75,
+      weight:      1,
+    }).bindTooltip(tooltip, { direction: 'top', offset: [0, -4] });
+  }
+
+  function formatTs(ts) {
+    // ts may be ISO string or unix int
+    const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+           + ' ' + d.toLocaleDateString([], { day: '2-digit', month: 'short' });
+  }
+
+  function timeSince(ts) {
+    const d    = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    const mins = Math.floor((Date.now() - d) / 60000);
+    if (mins < 60)   return mins + 'm ago';
+    if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+    return Math.floor(mins / 1440) + 'd ago';
+  }
+
+  let overlandLayer  = L.layerGroup().addTo(map);
+  let shortcutsLayer = L.layerGroup().addTo(map);
+  let allBounds      = [];
+
+  async function loadPoints() {
+    document.getElementById('map-loading').style.display = 'flex';
+    document.getElementById('map-loading').textContent   = 'Loading points…';
+    overlandLayer.clearLayers();
+    shortcutsLayer.clearLayers();
+    allBounds = [];
+
+    const endDate = document.getElementById('date-picker').value;
+    const url = endDate ? `/api/location-points?end_date=${endDate}` : '/api/location-points';
+
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+
+      const { overland, shortcuts } = data;
+
+      // ── Overland ────────────────────────────────────
+      if (overland.length > 1) {
+        const coords = overland.map(p => [p.lat, p.lon]);
+        L.polyline(coords, { color: BLUE, weight: 2, opacity: 0.5 })
+          .addTo(overlandLayer);
+      }
+      overland.forEach((p, i) => {
+        const isLast  = i === overland.length - 1;
+        const color   = isLast ? GREEN : BLUE;
+        const radius  = isLast ? 7 : 4;
+        const tooltip = `<b>Overland</b><br>${formatTs(p.ts)}`
+                      + (p.activity ? `<br>Activity: ${p.activity}` : '')
+                      + (p.speed    != null ? `<br>Speed: ${(p.speed * 3.6).toFixed(1)} km/h` : '')
+                      + (p.battery  != null ? `<br>Battery: ${Math.round(p.battery * 100)}%` : '');
+        makeCircle(p.lat, p.lon, color, radius, tooltip).addTo(overlandLayer);
+        allBounds.push([p.lat, p.lon]);
+      });
+
+      // ── Shortcuts ───────────────────────────────────
+      if (shortcuts.length > 1) {
+        const coords = shortcuts.map(p => [p.lat, p.lon]);
+        L.polyline(coords, { color: ORANGE, weight: 2, opacity: 0.5 })
+          .addTo(shortcutsLayer);
+      }
+      shortcuts.forEach((p, i) => {
+        const isLast  = i === shortcuts.length - 1;
+        const color   = isLast ? GREEN : ORANGE;
+        const radius  = isLast ? 7 : 4;
+        const tooltip = `<b>Shortcuts</b><br>${formatTs(p.ts)}`
+                      + (p.activity ? `<br>Activity: ${p.activity}` : '')
+                      + (p.battery  != null ? `<br>Battery: ${p.battery}%` : '')
+                      + (p.device   ? `<br>Device: ${p.device}` : '');
+        makeCircle(p.lat, p.lon, color, radius, tooltip).addTo(shortcutsLayer);
+        allBounds.push([p.lat, p.lon]);
+      });
+
+      // ── Fit map ──────────────────────────────────────
+      if (allBounds.length > 0) {
+        map.fitBounds(allBounds, { padding: [32, 32] });
+      }
+
+      // ── Stats ────────────────────────────────────────
+      document.getElementById('stat-overland').textContent  = overland.length;
+      document.getElementById('stat-shortcuts').textContent = shortcuts.length;
+
+      const allPoints = [...overland, ...shortcuts];
+      if (allPoints.length > 0) {
+        const latest = allPoints.reduce((a, b) => {
+          const ta = typeof a.ts === 'number' ? a.ts : new Date(a.ts).getTime() / 1000;
+          const tb = typeof b.ts === 'number' ? b.ts : new Date(b.ts).getTime() / 1000;
+          return ta > tb ? a : b;
+        });
+        document.getElementById('stat-latest').textContent = formatTs(latest.ts);
+        document.getElementById('stat-gap').textContent    = timeSince(latest.ts);
+      }
+
+      document.getElementById('map-stats').style.display = 'flex';
+      document.getElementById('map-loading').style.display = 'none';
+
+      if (allBounds.length === 0) {
+        document.getElementById('map-loading').style.display = 'flex';
+        document.getElementById('map-loading').textContent   = 'No points found for this date range.';
+      }
+
+    } catch (e) {
+      document.getElementById('map-loading').style.display = 'flex';
+      document.getElementById('map-loading').textContent   = 'Error loading points: ' + e.message;
+    }
+  }
+
+  function goToToday() {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('date-picker').value = today;
+    loadPoints();
+  }
+
+  // Initialise date picker to today and load
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date-picker').value = today;
+  loadPoints();
+</script>
+{% endblock %}

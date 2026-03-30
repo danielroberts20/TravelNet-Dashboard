@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Cron Jobs — TravelNet{% endblock %}
+
+{% block head %}
+<style>
+  .cron-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .cron-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .cron-card.success { border-left: 3px solid var(--green); }
+  .cron-card.failure { border-left: 3px solid var(--red); }
+  .cron-card.unknown { border-left: 3px solid var(--border2); }
+  .cron-name   { font-family: var(--mono); font-size: 12px; color: var(--text-hi); margin-bottom: 6px; }
+  .cron-time   { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+  .cron-detail { font-size: 11px; color: var(--text-dim); font-family: var(--mono);
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cron-never  { font-size: 12px; color: var(--text-dim); font-style: italic; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Cron Jobs</h1>
+  <p>Last-run status and scheduled task history. Crons run at host level.</p>
+</div>
+
+{# ── Last-run status board ─────────────────────────────── #}
+<div style="margin-bottom: 8px;"><span class="card-title">Last Run Status</span></div>
+<div class="cron-status-grid" id="cron-status-grid">
+  <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">Loading…</div>
+</div>
+
+{# ── Schedule reference ────────────────────────────────── #}
+<div style="margin-bottom: 8px;"><span class="card-title">Schedule Reference</span></div>
+<div class="card" style="margin-bottom: 24px;">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Script</th>
+        <th>Schedule</th>
+        <th>Description</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>get_fx.py</td>
+          <td>02:00 on 2nd</td>
+          <td>Pull FX rates for previous month</td>
+        </tr>
+        <tr>
+          <td>get_fx_up_to_date.py</td>
+          <td>03:00 on 8th/15th/22nd/28th</td>
+          <td>Pull missing FX rates from exchangerate.host</td>
+        </tr>
+        <tr>
+          <td>backfill_gbp.py</td>
+          <td>02:30 on 2nd</td>
+          <td>Backfill NULL amount_gbp from DB FX data</td>
+        </tr>
+        <tr>
+          <td>send_warn_error_log.py</td>
+          <td>06:00 daily</td>
+          <td>Flush and email WARNING+ log records</td>
+        </tr>
+        <tr>
+          <td>reset_fx_api_usage.py</td>
+          <td>00:00 on 1st</td>
+          <td>Reset monthly API call counters</td>
+        </tr>
+        <tr>
+          <td>get_weather.py</td>
+          <td>04:00 on 14th</td>
+          <td>Get weather day for previous 40 days, starting from the 7th</td>
+        </tr>
+        <tr>
+          <td>backup_db.py</td>
+          <td>01:00 on Sunday</td>
+          <td>Backup full DB to local storage, keep only last 4 weeks</td>
+        </tr>
+        <tr>
+          <td>check_health_gaps.py</td>
+          <td>05:50 on Monday</td>
+          <td>Look for missing expected metrics in last week of health data</td>
+        </tr>
+        <tr>
+          <td>crontab_tz.py</td>
+          <td>03:00 on 2nd/16th</td>
+          <td>Update system cron jobs to local timezone</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── API usage ─────────────────────────────────────────── #}
+{% if api_usage %}
+<div style="margin-bottom: 8px;"><span class="card-title">API Usage</span></div>
+<div class="card" style="margin-bottom: 24px;">
+  {% set services = [
+    ("exchangerate.host", 100),
+    ("open-meteo", 300000),
+  ] %}
+  {% for service_name, limit in services %}
+    {% set svc = api_usage.get(service_name) %}
+    {% if svc %}
+    <div style="margin-bottom: 16px;">
+      <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:8px;">
+        {{ service_name }}
+      </div>
+      <div class="grid grid-3" style="margin-bottom:8px;">
+        <div>
+          <div class="stat-label">Calls this month</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ svc.get('count', '—') }}
+          </div>
+        </div>
+        <div>
+          <div class="stat-label">Month</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ svc.get('month', '—') }}
+          </div>
+        </div>
+        <div>
+          <div class="stat-label">Monthly limit</div>
+          <div style="font-family:var(--mono);font-size:20px;color:var(--text-hi);">
+            {{ limit | string }}
+          </div>
+        </div>
+      </div>
+      {% set calls = svc.get('count', 0) | int %}
+      {% set pct   = (calls / limit * 100) | round(1) %}
+      <div class="progress-bar-bg" style="height:6px;">
+        <div class="progress-bar-fill {% if pct > 85 %}danger{% elif pct > 65 %}warn{% endif %}"
+             style="width:{{ pct }}%"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">{{ pct }}% of monthly quota used</div>
+    </div>
+    {% if not loop.last %}<hr style="border:none;border-top:1px solid var(--border);margin:8px 0 16px;">{% endif %}
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Log digest entries ────────────────────────────────── #}
+<div style="margin-bottom: 8px;">
+  <span class="card-title">Log Digest History</span>
+</div>
+<div class="card">
+  {% if jobs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Level</th>
+        <th>Logger / Job</th>
+        <th>Message</th>
+        <th>Timestamp</th>
+      </tr></thead>
+      <tbody>
+        {% for row in jobs %}
+        <tr>
+          <td>
+            {% set lvl = row.get('levelname', row.get('level', '')) %}
+            {% if lvl in ['ERROR', 'CRITICAL'] %}
+              <span class="badge badge-red">{{ lvl }}</span>
+            {% elif lvl == 'WARNING' %}
+              <span class="badge badge-yellow">{{ lvl }}</span>
+            {% elif lvl == 'INFO' %}
+              <span class="badge badge-blue">{{ lvl }}</span>
+            {% else %}
+              <span class="badge badge-dim">{{ lvl or '—' }}</span>
+            {% endif %}
+          </td>
+          <td class="dim">{{ row.get('name', row.get('logger', '—')) }}</td>
+          <td>{{ row.get('message', row.get('msg', '—'))[:160] }}</td>
+          <td class="dim" style="white-space:nowrap;">{{ row.get('ts', row.get('created', row.get('timestamp', '—'))) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="font-family:var(--mono);font-size:13px;color:var(--text-dim);">
+    No log digest entries found. Either the table doesn't exist yet, or no WARNING+ events have been logged.
+  </p>
+  {% endif %}
+</div>
+
+<script>
+  const KNOWN_JOBS = [
+    "get_fx",
+    "get_fx_up_to_date",
+    "backfill_gbp",
+    "send_warn_error_log",
+    "reset_fx_api_usage",
+    "get_weather",
+    "backup_db",
+    "check_health_gaps",
+  ];
+
+  function timeSince(ts) {
+    const mins = Math.floor((Date.now() / 1000 - ts) / 60);
+    if (mins < 60)   return mins + 'm ago';
+    if (mins < 1440) return Math.floor(mins / 60) + 'h ago';
+    return Math.floor(mins / 1440) + 'd ago';
+  }
+
+  async function loadCronRuns() {
+    const grid = document.getElementById('cron-status-grid');
+    try {
+      const resp = await fetch('/api/cron-runs');
+      const data = await resp.json();
+
+      const cards = KNOWN_JOBS.map(job => {
+        const run = data[job];
+        if (!run) {
+          return `<div class="cron-card unknown">
+            <div class="cron-name">${job}</div>
+            <div class="cron-never">Never recorded</div>
+          </div>`;
+        }
+        const cls   = run.success ? 'success' : 'failure';
+        const badge = run.success
+          ? '<span class="badge badge-green">✓ ok</span>'
+          : '<span class="badge badge-red">✗ failed</span>';
+        return `<div class="cron-card ${cls}">
+          <div class="cron-name">${job}</div>
+          <div style="margin-bottom:6px;">${badge}</div>
+          <div class="cron-time">${run.ts_human} · ${timeSince(run.timestamp)}</div>
+          ${run.detail ? `<div class="cron-detail" title="${run.detail}">${run.detail}</div>` : ''}
+        </div>`;
+      });
+
+      grid.innerHTML = cards.join('');
+    } catch(e) {
+      grid.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">
+        Could not load cron runs: ${e.message}
+      </div>`;
+    }
+  }
+
+  loadCronRuns();
+</script>
+{% endblock %}

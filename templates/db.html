@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Database — TravelNet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1>Database</h1>
+      <p>All tables in the live SQLite database. Click Browse to inspect rows.</p>
+    </div>
+    <button class="btn btn-ghost" onclick="loadDatabase()">↺ Refresh</button>
+  </div>
+</div>
+
+<div id="database-loading" style="font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-bottom:16px;">
+  Loading…
+</div>
+
+<div style="display:flex; justify-content:flex-end; margin-bottom:16px;">
+  <a href="{{ url_for('db_download') }}" class="btn btn-primary">
+    ↓ Download travel.db
+  </a>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Table</th>
+        <th>Rows</th>
+        <th>Columns</th>
+        <th>Resettable</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="section-tables">
+        Loading...
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const DB_TABLE_URL = "{{ url_for('db_table', table='__TABLE__') }}";
+</script>
+
+<script>
+  function renderTable(table) {
+    var cols = table.cols.join(', ');
+    var browseUrl = DB_TABLE_URL.replace('__TABLE__', encodeURIComponent(table.name));
+    var browseBtn = `<a href="${browseUrl}" class="btn btn-ghost" style="padding:4px 12px; font-size:11px;">Browse →</a>`;
+
+    return `<tr data-table="${table.name}">
+    <td style="color:var(--text-hi);">
+      ${table.name}
+      ${table.type === 'view' ? '&nbsp;<span class="badge badge-blue">view</span>' : ''}
+    </td>
+    <td class="row-count">…</td>
+    <td class="dim" style="font-size:11px; max-width:320px; white-space:normal; line-height:1.8;">
+      ${cols}
+    </td>
+    <td>
+      ${table.resettable
+        ? '<span class="badge badge-yellow">yes</span>'
+        : '<span class="badge badge-dim">no</span>'}
+    </td>
+    <td>${browseBtn}</td>
+  </tr>`;
+  }
+
+  async function loadDatabase() {
+    const loadEl = document.getElementById('database-loading');
+    const refreshBtn = document.querySelector('.btn-ghost');
+
+    loadEl.textContent = 'Loading…';
+    loadEl.style.color = 'var(--text-dim)';
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = '↺ Loading…';
+
+    try {
+      const resp = await fetch('/api/db/meta', { signal: AbortSignal.timeout(15000) });
+      const d = await resp.json();
+      const tables = d.tables || {};
+      document.getElementById('section-tables').innerHTML =
+        d.tables.map(renderTable).join('');   // renders with count = '…'
+
+      loadEl.textContent = 'Loading row counts…';
+      const es = new EventSource('/api/db/count');
+
+      es.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.done) {
+          es.close();
+          loadEl.textContent = '';
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = '↺ Refresh';
+          return;
+        }
+        // Find the row for this table and update just the count cell
+        const row = document.querySelector(`[data-table="${data.name}"]`);
+        if (row) row.querySelector('.row-count').textContent = data.count;
+      };
+
+      es.onerror = () => {
+        es.close();
+        loadEl.textContent = 'Failed to load row counts';
+        loadEl.style.color = 'var(--red)';
+      };
+
+    } catch(e) {
+      loadEl.textContent = 'Failed to load: ' + e.message;
+      loadEl.style.color = 'var(--red)';
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = '↺ Refresh';
+    }
+  }
+  loadDatabase();
+</script>
+{% endblock %}
