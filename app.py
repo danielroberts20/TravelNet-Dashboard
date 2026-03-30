@@ -52,6 +52,10 @@ RESETTABLE_TABLES = [
     "cellular_state",
     "weather_hourly",
     "weather_daily",
+    "known_locations",
+    "gap_annotations",
+    "state_of_mind",
+    "trigger_log",
 ]
 
 @app.route("/manifest.json")
