@@ -52,7 +52,7 @@ RESETTABLE_TABLES = [
     "cellular_state",
     "weather_hourly",
     "weather_daily",
-    "known_locations",
+    "known_places",
     "gap_annotations",
     "state_of_mind",
     "trigger_log",
