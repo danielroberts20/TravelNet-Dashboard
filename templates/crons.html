@@ -70,14 +70,34 @@
           <td>Flush and email WARNING+ log records</td>
         </tr>
         <tr>
-          <td>reset_fx_api_usage.py</td>
+          <td>reset_api_usage.py</td>
           <td>00:00 on 1st</td>
           <td>Reset monthly API call counters</td>
+        </tr>
+        <tr>
+          <td>tailscale cert</td>
+          <td>00:00 on 1st</td>
+          <td>Renew Tailscale TLS certificate</td>
+        </tr>
+        <tr>
+          <td>reboot</td>
+          <td>04:00 on 1st</td>
+          <td>Monthly host reboot</td>
         </tr>
         <tr>
           <td>get_weather.py</td>
           <td>04:00 on 14th</td>
           <td>Get weather day for previous 40 days, starting from the 7th</td>
+        </tr>
+        <tr>
+          <td>backup_db_to_cloudfare.sh</td>
+          <td>03:00 on 2nd</td>
+          <td>Backup DB to Cloudflare R2</td>
+        </tr>
+        <tr>
+          <td>send_transaction_reminder.py</td>
+          <td>08:00 on 2nd</td>
+          <td>Send push notification reminder to upload monthly transactions</td>
         </tr>
         <tr>
           <td>backup_db.py</td>
@@ -88,6 +108,26 @@
           <td>check_health_gaps.py</td>
           <td>05:50 on Monday</td>
           <td>Look for missing expected metrics in last week of health data</td>
+        </tr>
+        <tr>
+          <td>push_public_stats.py</td>
+          <td>07:00 daily</td>
+          <td>Build public stats payload and push to GitHub repo as warm cache</td>
+        </tr>
+        <tr>
+          <td>geocode_places.py</td>
+          <td>04:30 daily</td>
+          <td>Geocode places with missing lat/lon data</td>
+        </tr>
+        <tr>
+          <td>backfill_place.py</td>
+          <td>05:15 daily</td>
+          <td>Backfill missing place_id on location records</td>
+        </tr>
+        <tr>
+          <td>run_tests.py</td>
+          <td>06:00 on 1st/15th</td>
+          <td>Run full pytest suite and email results (runs on host, not Docker)</td>
         </tr>
         <tr>
           <td>crontab_tz.py</td>
@@ -197,11 +237,15 @@
     "get_fx",
     "get_fx_up_to_date",
     "backfill_gbp",
+    "backfill_place",
     "send_warn_error_log",
-    "reset_fx_api_usage",
+    "reset_api_usage",
     "get_weather",
     "backup_db",
     "check_health_gaps",
+    "push_public_stats",
+    "geocode_places",
+    "run_tests",
   ];
 
   function timeSince(ts) {
