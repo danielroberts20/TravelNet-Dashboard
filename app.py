@@ -4,7 +4,8 @@ import sqlite3
 import subprocess
 import shutil
 import psutil #type: ignore
-from datetime import datetime, timezone
+import calendar
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
@@ -27,6 +28,75 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
 
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
+
+SCHEDULE_ROWS = [
+    ("get_fx.py",                  "02:00 on 2nd",           "Pull FX rates for previous month"),
+    ("get_fx_up_to_date.py",       "03:00 on 8th/15th/22nd/28th", "Pull missing FX rates from exchangerate.host"),
+    ("backfill_gbp.py",            "02:30 on 2nd",           "Backfill NULL amount_gbp from DB FX data"),
+    ("send_warn_error_log.py",     "06:00 daily",            "Flush and email WARNING+ log records"),
+    ("reset_api_usage.py",         "00:00 on 1st",           "Reset monthly API call counters"),
+    ("tailscale cert",             "00:00 on 1st",           "Renew Tailscale TLS certificate"),
+    ("reboot",                     "04:00 on 1st",           "Monthly host reboot"),
+    ("get_weather.py",             "04:00 on 14th",          "Get weather day for previous 40 days, starting from the 7th"),
+    ("backup_db_to_cloudfare.sh",  "03:00 on 2nd",           "Backup DB to Cloudflare R2"),
+    ("send_transaction_reminder.py","08:00 on 2nd",          "Send push notification reminder to upload monthly transactions"),
+    ("backup_db.py",               "01:00 on Sunday",        "Backup full DB to local storage, keep only last 4 weeks"),
+    ("check_health_gaps.py",       "05:50 on Monday",        "Look for missing expected metrics in last week of health data"),
+    ("push_public_stats.py",       "07:00 daily",            "Build public stats payload and push to GitHub repo as warm cache"),
+    ("geocode_places.py",          "04:30 daily",            "Geocode places with missing lat/lon data"),
+    ("backfill_place.py",          "05:15 daily",            "Backfill missing place_id on location records"),
+    ("run_tests.py",               "06:00 on 1st/15th",      "Run full pytest suite and email results (runs on host, not Docker)"),
+    ("crontab_tz.py",              "03:00 on 2nd/16th",      "Update system cron jobs to local timezone"),
+]
+
+_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+             "friday": 4, "saturday": 5, "sunday": 6}
+
+def _next_run(schedule: str, now: datetime) -> datetime:
+    """Compute next run datetime from a human-readable schedule string."""
+    m = re.match(r'(\d{2}):(\d{2})\s+(.*)', schedule)
+    if not m:
+        return datetime.max
+    hour, minute, spec = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+
+    if spec == "daily":
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate
+
+    if spec.startswith("on "):
+        spec = spec[3:].strip()
+
+        # Named weekday
+        if spec.lower() in _WEEKDAYS:
+            target_wd = _WEEKDAYS[spec.lower()]
+            candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=1)
+            while candidate.weekday() != target_wd:
+                candidate += timedelta(days=1)
+            return candidate
+
+        # Day-of-month list: "2nd", "8th/15th/22nd/28th", "1st/15th", etc.
+        days = [int(re.match(r'(\d+)', p.strip()).group(1))
+                for p in spec.split('/') if re.match(r'(\d+)', p.strip())]
+        if days:
+            candidates = []
+            for d in days:
+                for month_offset in range(3):
+                    year  = now.year + (now.month - 1 + month_offset) // 12
+                    month = (now.month - 1 + month_offset) % 12 + 1
+                    if d > calendar.monthrange(year, month)[1]:
+                        continue
+                    dt = now.replace(year=year, month=month, day=d,
+                                     hour=hour, minute=minute, second=0, microsecond=0)
+                    if dt > now:
+                        candidates.append(dt)
+            if candidates:
+                return min(candidates)
+
+    return datetime.max
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -486,7 +556,11 @@ def crons():
     except Exception:
         pass
 
-    return render_template("crons.html", jobs=jobs, api_usage=api_usage)
+    now = datetime.now()
+    schedule_rows = sorted(SCHEDULE_ROWS, key=lambda r: _next_run(r[1], now))
+
+    return render_template("crons.html", jobs=jobs, api_usage=api_usage,
+                           schedule_rows=schedule_rows)
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
