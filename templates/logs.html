@@ -13,6 +13,16 @@
     color: var(--text-hi); border-radius: 5px;
     padding: 6px 10px; font-family: var(--mono); font-size: 12px;
   }
+  .service-toggle { display: flex; gap: 3px; }
+  .svc-btn {
+    font-size: 11px; padding: 4px 9px;
+    font-family: var(--mono);
+    border: 1px solid var(--border2);
+    background: none; border-radius: 4px;
+    color: var(--text-dim); cursor: pointer;
+  }
+  .svc-btn:hover { color: var(--text-hi); border-color: var(--text-dim); }
+  .svc-btn.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
   #log-output {
     background: #08090c;
     border: 1px solid var(--border);
@@ -56,10 +66,15 @@
 {% block content %}
 <div class="page-header">
   <h1>Logs</h1>
-  <p>Live stream from <code style="font-family:var(--mono);color:var(--accent);">docker logs --follow {{ container }}</code></p>
+  <p>Live stream from <code style="font-family:var(--mono);color:var(--accent);" id="container-label">docker logs --follow {{ container }}</code></p>
 </div>
 
 <div class="log-toolbar">
+  <div class="service-toggle" id="service-toggle">
+    <button class="svc-btn active" data-container="{{ container }}">TravelNet</button>
+    <button class="svc-btn"       data-container="{{ trevor_container }}">Trevor</button>
+  </div>
+
   <label style="margin:0;display:inline;">Lines:</label>
   <input type="number" id="lines-input" value="{{ lines }}" min="10" max="2000" step="50" />
 
@@ -83,17 +98,30 @@
 <div id="log-output">(Press Connect to stream logs)</div>
 
 <script>
-  const output    = document.getElementById('log-output');
-  const dot       = document.getElementById('status-dot');
-  const label     = document.getElementById('status-label');
-  const btnConn   = document.getElementById('btn-connect');
-  const btnClear  = document.getElementById('btn-clear');
-  const btnScroll = document.getElementById('btn-scroll');
-  const linesIn   = document.getElementById('lines-input');
+  const output         = document.getElementById('log-output');
+  const dot            = document.getElementById('status-dot');
+  const label          = document.getElementById('status-label');
+  const btnConn        = document.getElementById('btn-connect');
+  const btnClear       = document.getElementById('btn-clear');
+  const btnScroll      = document.getElementById('btn-scroll');
+  const linesIn        = document.getElementById('lines-input');
+  const containerLabel = document.getElementById('container-label');
 
   let es = null;
-  let autoScroll   = true;
-  let minLevelRank = 20; // default: INFO+
+  let autoScroll    = true;
+  let minLevelRank  = 20; // default: INFO+
+  let activeContainer = document.querySelector('.svc-btn.active').dataset.container;
+
+  document.querySelectorAll('.svc-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.svc-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeContainer = btn.dataset.container;
+      containerLabel.textContent = `docker logs --follow ${activeContainer}`;
+      // Reconnect to new container if already streaming
+      if (es) connect();
+    });
+  });
 
   const LEVEL_RANK = { debug: 10, upload: 15, info: 20, warn: 30, err: 40, critical: 50 };
 
@@ -179,7 +207,7 @@
     setStatus('connected');
     btnConn.textContent = 'Reconnect';
 
-    es = new EventSource(`/logs/stream?lines=${lines}`);
+    es = new EventSource(`/logs/stream?lines=${lines}&container=${encodeURIComponent(activeContainer)}`);
     es.onmessage = e => appendLine(e.data);
     es.onerror   = () => {
       setStatus('error');

@@ -37,6 +37,7 @@ DB_PATH            = os.environ.get("DB_PATH", "/data/travel.db")
 FASTAPI_URL        = os.environ.get("FASTAPI_URL", "http://fastapi:8000")
 FASTAPI_API_KEY    = os.environ.get("FASTAPI_API_KEY", "")
 DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
+TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
 
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
@@ -498,7 +499,12 @@ def logs():
         lines = int(request.args.get("lines", 200))
     except ValueError:
         pass
-    return render_template("logs.html", container=DOCKER_CONTAINER, lines=lines)
+    return render_template(
+        "logs.html",
+        container=DOCKER_CONTAINER,
+        trevor_container=TREVOR_CONTAINER,
+        lines=lines,
+    )
 
 
 @app.route("/logs/stream")
@@ -506,7 +512,11 @@ def logs():
 def logs_stream():
     """SSE endpoint: streams docker logs tail then follows."""
     lines = request.args.get("lines", 200)
-    container = DOCKER_CONTAINER
+    # Validate container against allowlist to prevent arbitrary command injection
+    requested = request.args.get("container", DOCKER_CONTAINER)
+    if requested not in {DOCKER_CONTAINER, TREVOR_CONTAINER}:
+        requested = DOCKER_CONTAINER
+    container = requested
 
     def generate():
         cmd = ["docker", "logs", "--tail", str(lines), "--follow", container]
