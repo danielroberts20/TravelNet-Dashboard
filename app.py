@@ -30,7 +30,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
 
 SCHEDULE_ROWS = [
-    ("get_fx.py",                  "02:02 daily",            "Pull FX rates for 2 days ago"),
+    ("get_fx.py",                  "02:00 daily",            "Pull FX rates for 2 days ago"),
     ("get_fx_up_to_date.py",       "03:00 on 8th/15th/22nd/28th", "Pull missing FX rates from exchangerate.host"),
     ("backfill_gbp.py",            "02:30 on 2nd",           "Backfill NULL amount_gbp from DB FX data"),
     ("send_warn_error_log.py",     "06:00 daily",            "Flush and email WARNING+ log records"),
