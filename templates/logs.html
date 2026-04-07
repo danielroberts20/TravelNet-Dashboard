@@ -80,8 +80,8 @@
 
   <div class="level-filter" id="level-filter">
     <button class="level-btn"        data-rank="0">All</button>
-    <button class="level-btn"        data-rank="15">UPLOAD+</button>
     <button class="level-btn active" data-rank="20">INFO+</button>
+    <button class="level-btn"        data-rank="25">IMPORTANT+</button>
     <button class="level-btn"        data-rank="30">WARNING+</button>
     <button class="level-btn"        data-rank="40">ERROR+</button>
   </div>
@@ -123,15 +123,15 @@
     });
   });
 
-  const LEVEL_RANK = { debug: 10, upload: 15, info: 20, warn: 30, err: 40, critical: 50 };
+  const LEVEL_RANK = { debug: 10, info: 20, important: 25, warn: 30, err: 40, critical: 50 };
 
   const levelColors = {
-    upload:   '#e8d040',
-    err:      '#e05252',
-    warn:     '#f0b83d',
-    debug:    '#00b8b8',
-    info:     '#34c47c',
-    critical: '#b05ed4',
+    important: '#38bdf8',
+    err:       '#e05252',
+    warn:      '#f0b83d',
+    debug:     '#00b8b8',
+    info:      '#34c47c',
+    critical:  '#b05ed4',
   };
 
   function setStatus(state) {
@@ -146,7 +146,7 @@
       const level = parts[1].trim().toUpperCase();
       if (['ERROR', 'CRITICAL'].includes(level)) return 'err';
       if (level === 'WARNING')                    return 'warn';
-      if (level === 'UPLOAD')                     return 'upload';
+      if (level === 'IMPORTANT')                  return 'important';
       if (level === 'DEBUG')                      return 'debug';
       if (level === 'INFO')                       return 'info';
     }
