@@ -332,33 +332,6 @@ def db_tables_counts():
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-# Old DB code
-"""@app.route("/db")
-@login_required
-def db_view():
-    tables = []
-    try:
-        conn = get_db()
-        rows = conn.execute(
-            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
-        ).fetchall()
-        for r in rows:
-            tname = r["name"]
-            ttype = r["type"]
-            count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
-            cols  = [c[1] for c in conn.execute(f"PRAGMA table_info([{tname}])").fetchall()]
-            tables.append({
-                "name":       tname,
-                "type":       ttype,
-                "count":      count,
-                "cols":       cols,
-                "resettable": tname in RESETTABLE_TABLES,
-            })
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
-    return render_template("db.html", tables=tables)"""
-
 
 @app.route("/db/table/<table>")
 @login_required
@@ -731,7 +704,7 @@ def location_points():
 
         if view_exists:
             rows = conn.execute("""
-                SELECT timestamp, lat, lon, altitude, activity,
+                SELECT timestamp, latitude, longitude, altitude, activity,
                        battery, speed, device, accuracy, source
                 FROM location_unified
                 WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
@@ -750,12 +723,12 @@ def location_points():
 
     # Split back into sources for the map (different colours)
     overland  = [
-        {"lat": p["lat"], "lon": p["lon"], "ts": p["timestamp"],
+        {"lat": p["latitude"], "lon": p["longitude"], "ts": p["timestamp"],
          "activity": p["activity"], "battery": p["battery"], "speed": p["speed"]}
         for p in points if p["source"] == "overland"
     ]
     shortcuts = [
-        {"lat": p["lat"], "lon": p["lon"], "ts": p["timestamp"],
+        {"lat": p["latitude"], "lon": p["longitude"], "ts": p["timestamp"],
          "activity": p["activity"], "battery": p["battery"], "device": p.get("device")}
         for p in points if p["source"] == "shortcuts"
     ]
@@ -798,7 +771,7 @@ def _dedup_location(points: list, time_window: int = 60, dist_threshold: float =
         for i, ots in enumerate(overland_ts):
             if abs(pt_ts - ots) <= time_window:
                 op   = overland[i]
-                dist = math.sqrt((pt["lat"] - op["lat"]) ** 2 + (pt["lon"] - op["lon"]) ** 2)
+                dist = math.sqrt((pt["latitude"] - op["latitude"]) ** 2 + (pt["longitude"] - op["longitude"]) ** 2)
                 if dist <= dist_threshold:
                     matched = True
                     break
@@ -815,7 +788,7 @@ def _query_tables_directly(conn, since: int, until: int) -> list:
     points = []
     if table_exists(conn, "location_overland"):
         rows = conn.execute("""
-            SELECT timestamp, lat, lon, altitude, activity,
+            SELECT timestamp, latitude, longitude, altitude, activity,
                    battery_level AS battery, speed, device_id AS device,
                    horizontal_accuracy AS accuracy
             FROM location_overland
