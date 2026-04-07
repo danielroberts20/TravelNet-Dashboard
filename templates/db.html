@@ -39,6 +39,31 @@
   </div>
 </div>
 
+<div style="margin-top:40px; border:1px solid var(--red); border-radius:var(--radius); overflow:hidden;">
+  <div style="padding:14px 20px; border-bottom:1px solid var(--red); background:var(--red-lo); display:flex; align-items:center; gap:10px;">
+    <span style="color:var(--red); font-size:15px;">⚠</span>
+    <span style="font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--red);">Danger Zone</span>
+  </div>
+
+  <div style="background:var(--surface);">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); gap:16px; flex-wrap:wrap;">
+      <div>
+        <div style="font-size:13px; color:var(--text-hi); margin-bottom:3px;">Prune old location points</div>
+        <div style="font-size:12px; color:var(--text-dim);">Delete Overland and Shortcuts records older than a configurable threshold.</div>
+      </div>
+      <button class="btn btn-danger" style="flex-shrink:0;" onclick="openPruneModal()">Prune…</button>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; gap:16px; flex-wrap:wrap;">
+      <div>
+        <div style="font-size:13px; color:var(--text-hi); margin-bottom:3px;">Truncate resettable tables</div>
+        <div style="font-size:12px; color:var(--text-dim);">Wipe all rows from tables marked <span class="badge badge-yellow">resettable</span> — useful after a migration dry-run.</div>
+      </div>
+      <button class="btn btn-danger" disabled style="flex-shrink:0; opacity:.45; cursor:not-allowed;">Truncate…</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const DB_TABLE_URL = "{{ url_for('db_table', table='__TABLE__') }}";
 </script>
@@ -114,5 +139,374 @@
     }
   }
   loadDatabase();
+</script>
+
+{# ── Prune modal ────────────────────────────────────────────────────────────── #}
+<div id="prune-modal" style="display:none; position:fixed; inset:0; z-index:500; background:rgba(0,0,0,.6); backdrop-filter:blur(2px); align-items:center; justify-content:center;">
+  <div style="background:var(--surface); border:1px solid var(--border2); border-radius:8px; width:min(640px,94vw); max-height:90vh; overflow-y:auto; box-shadow:0 8px 40px rgba(0,0,0,.6);">
+
+    {# Header #}
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border);">
+      <span style="font-family:var(--mono); font-size:13px; font-weight:600; color:var(--red);">⚠ Prune Records</span>
+      <button onclick="closePruneModal()" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:18px; line-height:1; padding:0 4px;">&times;</button>
+    </div>
+
+    {# Phase 1 — Configure #}
+    <div id="prune-phase-configure" style="padding:20px;">
+      <p style="font-size:13px; color:var(--text-dim); margin-bottom:20px;">
+        Delete all rows with a timestamp <strong style="color:var(--text);">before</strong> the chosen cutoff.
+        A backup is created automatically before any data is removed.
+      </p>
+
+      <label style="font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); display:block; margin-bottom:6px;">Cutoff date &amp; time</label>
+      <input type="datetime-local" id="prune-cutoff"
+             style="background:var(--bg); border:1px solid var(--border2); color:var(--text-hi); border-radius:var(--radius); padding:8px 12px; font-family:var(--mono); font-size:13px; width:100%; outline:none;"
+             onfocus="this.style.borderColor='var(--red)'" onblur="this.style.borderColor='var(--border2)'"
+             oninput="updateCutoffUtcDisplay()" />
+      <div id="prune-cutoff-tz-note" style="font-family:var(--mono); font-size:11px; color:var(--text-dim); margin-top:6px; margin-bottom:20px;"></div>
+
+      <label style="font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-dim); display:block; margin-bottom:10px;">Tables to prune</label>
+
+      <div style="margin-bottom:8px; display:flex; gap:12px;">
+        <button class="btn btn-ghost" style="font-size:11px; padding:3px 10px;" onclick="selectAllTables(true)">Select all</button>
+        <button class="btn btn-ghost" style="font-size:11px; padding:3px 10px;" onclick="selectAllTables(false)">Deselect all</button>
+      </div>
+
+      <div id="prune-table-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px 12px; margin-bottom:20px;">
+        <span style="font-size:12px; color:var(--text-dim);">Loading…</span>
+      </div>
+
+      <div id="prune-configure-error" style="display:none; font-family:var(--mono); font-size:12px; color:var(--red); margin-bottom:14px;"></div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="closePruneModal()">Cancel</button>
+        <button class="btn btn-danger" id="prune-preview-btn" onclick="runPrunePreview()">Preview →</button>
+      </div>
+    </div>
+
+    {# Phase 2 — Preview #}
+    <div id="prune-phase-preview" style="display:none; padding:20px;">
+      <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px;">
+        Rows that will be deleted (cutoff: <code id="prune-cutoff-display" style="color:var(--text-hi); font-family:var(--mono);"></code> <span style="color:var(--text-dim); font-size:11px;">UTC</span>):
+      </p>
+
+      <div style="border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; margin-bottom:20px;">
+        <table style="margin:0;">
+          <thead><tr>
+            <th>Table</th>
+            <th style="text-align:right;">Total</th>
+            <th style="text-align:right;">Delete</th>
+            <th style="text-align:right;">Remain</th>
+          </tr></thead>
+          <tbody id="prune-preview-body"></tbody>
+          <tfoot>
+            <tr style="border-top:1px solid var(--border2);">
+              <td style="font-family:var(--mono); font-size:12px; color:var(--text-dim);">Total (direct rows)</td>
+              <td id="prune-preview-total-all"    style="font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text-hi); text-align:right;"></td>
+              <td id="prune-preview-total-delete" style="font-family:var(--mono); font-size:12px; font-weight:600; color:var(--red);     text-align:right;"></td>
+              <td id="prune-preview-total-remain" style="font-family:var(--mono); font-size:12px; font-weight:600; color:var(--green);   text-align:right;"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div style="background:var(--red-lo); border:1px solid var(--red); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px;">
+        <p style="font-size:12px; color:var(--red); margin-bottom:10px;">
+          This action is <strong>irreversible</strong> (though a backup will be saved first).
+          Type <code style="font-family:var(--mono); background:rgba(0,0,0,.3); padding:1px 5px; border-radius:3px;">DELETE</code> to confirm.
+        </p>
+        <input type="text" id="prune-confirm-input" placeholder="DELETE"
+               style="background:var(--bg); border:1px solid var(--border2); color:var(--text-hi); border-radius:var(--radius); padding:7px 12px; font-family:var(--mono); font-size:13px; width:100%; outline:none;"
+               oninput="onPruneConfirmInput()" />
+      </div>
+
+      <div id="prune-preview-error" style="display:none; font-family:var(--mono); font-size:12px; color:var(--red); margin-bottom:14px;"></div>
+
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="showPrunePhase('configure')">← Back</button>
+        <button class="btn btn-danger" id="prune-execute-btn" onclick="runPruneExecute()" disabled style="opacity:.4; cursor:not-allowed;">Execute Prune</button>
+      </div>
+    </div>
+
+    {# Phase 3 — Result #}
+    <div id="prune-phase-result" style="display:none; padding:20px;">
+      <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px;">Prune complete. Rows deleted:</p>
+
+      <div style="border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; margin-bottom:16px;">
+        <table style="margin:0;">
+          <thead><tr>
+            <th>Table</th>
+            <th style="text-align:right;">Deleted</th>
+          </tr></thead>
+          <tbody id="prune-result-body"></tbody>
+        </table>
+      </div>
+
+      <p id="prune-backup-note" style="font-size:11px; color:var(--text-dim); font-family:var(--mono); margin-bottom:20px;"></p>
+
+      <div style="display:flex; justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="closePruneModal(); loadDatabase();">Close &amp; Refresh</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  let pruneTablesMeta = { tables: [], cascade_only: [], default: [] };
+
+  function localToUtcStr(localVal) {
+    // datetime-local values carry no timezone — treat as local time, convert to UTC.
+    if (!localVal) return null;
+    return new Date(localVal).toISOString().slice(0, 19); // "YYYY-MM-DDTHH:MM:SS"
+  }
+
+  function updateCutoffUtcDisplay() {
+    const val  = document.getElementById('prune-cutoff').value;
+    const note = document.getElementById('prune-cutoff-tz-note');
+    const tz   = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const offsetMins = -new Date().getTimezoneOffset();
+    const sign = offsetMins >= 0 ? '+' : '-';
+    const abs  = Math.abs(offsetMins);
+    const offsetStr = sign + String(Math.floor(abs / 60)).padStart(2, '0') + ':' + String(abs % 60).padStart(2, '0');
+
+    if (val) {
+      const utc = localToUtcStr(val);
+      note.innerHTML = `${tz} (UTC${offsetStr}) &nbsp;·&nbsp; Cutoff in UTC: <span style="color:var(--accent);">${utc}</span>`;
+    } else {
+      note.textContent = `${tz} (UTC${offsetStr})`;
+    }
+  }
+
+  async function openPruneModal() {
+    document.getElementById('prune-modal').style.display = 'flex';
+    showPrunePhase('configure');
+    document.getElementById('prune-configure-error').style.display = 'none';
+
+    // Pre-populate cutoff with today at midnight (local time) if not already set.
+    const cutoffInput = document.getElementById('prune-cutoff');
+    if (!cutoffInput.value) {
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      // datetime-local expects "YYYY-MM-DDTHH:MM" in local time
+      const pad = n => String(n).padStart(2, '0');
+      cutoffInput.value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T00:00`;
+    }
+    updateCutoffUtcDisplay();
+
+    if (pruneTablesMeta.tables.length === 0) {
+      try {
+        const resp = await fetch('/api/db/prune/tables');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        pruneTablesMeta = await resp.json();
+        if (!Array.isArray(pruneTablesMeta.tables)) throw new Error('Unexpected response format');
+      } catch(e) {
+        document.getElementById('prune-configure-error').textContent = 'Failed to load table list: ' + e.message;
+        document.getElementById('prune-configure-error').style.display = 'block';
+        return;
+      }
+    }
+    renderPruneTableGrid();
+  }
+
+  function closePruneModal() {
+    document.getElementById('prune-modal').style.display = 'none';
+    document.getElementById('prune-confirm-input').value = '';
+  }
+
+  function showPrunePhase(phase) {
+    ['configure', 'preview', 'result'].forEach(p => {
+      document.getElementById('prune-phase-' + p).style.display = p === phase ? 'block' : 'none';
+    });
+  }
+
+  function renderPruneTableGrid() {
+    const grid        = document.getElementById('prune-table-grid');
+    const cascadeOnly = new Set(pruneTablesMeta.cascade_only);
+    const defaultSet  = new Set(pruneTablesMeta.default);
+
+    grid.innerHTML = pruneTablesMeta.tables.map(name => {
+      const isCascade = cascadeOnly.has(name);
+      const checked   = defaultSet.has(name);
+      return `
+        <label style="display:flex; align-items:center; gap:6px; cursor:${isCascade ? 'default' : 'pointer'}; ${isCascade ? 'opacity:.5;' : ''}"
+               ${isCascade ? 'title="Cascade from state_of_mind — follows that table"' : ''}>
+          <input type="checkbox" data-table="${name}" ${checked ? 'checked' : ''}
+                 ${isCascade ? 'data-cascade="true"' : ''}
+                 style="accent-color:var(--red); cursor:${isCascade ? 'default' : 'pointer'}; flex-shrink:0;"
+                 onchange="onTableCheckboxChange(this)" />
+          <span style="font-family:var(--mono); font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
+        </label>`;
+    }).join('');
+  }
+
+  function onTableCheckboxChange(el) {
+    if (el.dataset.cascade) {
+      el.checked = document.querySelector('[data-table="state_of_mind"]')?.checked ?? false;
+      return;
+    }
+    if (el.dataset.table === 'state_of_mind') {
+      document.querySelectorAll('[data-cascade]').forEach(cb => { cb.checked = el.checked; });
+    }
+  }
+
+  function selectAllTables(checked) {
+    document.querySelectorAll('#prune-table-grid input[type=checkbox]').forEach(cb => {
+      cb.checked = checked;
+    });
+  }
+
+  function getSelectedTables() {
+    return [...document.querySelectorAll('#prune-table-grid input[type=checkbox]:checked')]
+      .map(cb => cb.dataset.table);
+  }
+
+  async function runPrunePreview() {
+    const localVal = document.getElementById('prune-cutoff').value;
+    const errEl    = document.getElementById('prune-configure-error');
+    errEl.style.display = 'none';
+
+    if (!localVal) {
+      errEl.textContent = 'Please select a cutoff date and time.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const tables = getSelectedTables();
+    if (tables.length === 0) {
+      errEl.textContent = 'Select at least one table.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const cutoffUtc = localToUtcStr(localVal); // convert local → UTC before sending
+
+    const btn = document.getElementById('prune-preview-btn');
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    try {
+      const resp = await fetch('/api/db/prune/preview', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ cutoff: cutoffUtc, tables }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) {
+        errEl.textContent = d.detail || d.error || 'Preview failed.';
+        errEl.style.display = 'block';
+        return;
+      }
+      renderPrunePreview(d.counts, cutoffUtc, d.totals || {});
+      showPrunePhase('preview');
+    } catch(e) {
+      errEl.textContent = 'Request failed: ' + e.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Preview →';
+    }
+  }
+
+  function renderPrunePreview(counts, cutoff, totals) {
+    document.getElementById('prune-cutoff-display').textContent = cutoff.replace('T', ' ');
+    document.getElementById('prune-confirm-input').value = '';
+    onPruneConfirmInput();
+
+    const cascadeOnly = new Set(pruneTablesMeta.cascade_only);
+    let grandTotal = 0, grandDelete = 0, grandRemain = 0;
+
+    const rows = Object.entries(counts).map(([table, deleteCount]) => {
+      const isCascade = cascadeOnly.has(table);
+      const total     = totals?.[table] ?? null;
+      const remain    = (total !== null && !isCascade) ? total - deleteCount : null;
+
+      if (!isCascade && total !== null) {
+        grandTotal  += total;
+        grandDelete += deleteCount;
+        grandRemain += remain;
+      }
+
+      const dimMono = 'font-family:var(--mono); font-size:12px; text-align:right; color:var(--text-dim);';
+      const totalCell  = isCascade ? `<td style="${dimMono}">—</td>`
+                                   : `<td style="${dimMono}">${total !== null ? total.toLocaleString() : '—'}</td>`;
+      const deleteCell = isCascade
+        ? `<td style="${dimMono} font-style:italic;">cascade</td>`
+        : `<td style="font-family:var(--mono); font-size:12px; text-align:right; ${deleteCount > 0 ? 'color:var(--red);' : 'color:var(--text-dim);'}">${deleteCount.toLocaleString()}</td>`;
+      const remainCell = isCascade ? `<td style="${dimMono}">—</td>`
+                                   : `<td style="font-family:var(--mono); font-size:12px; text-align:right; ${remain === 0 ? 'color:var(--yellow);' : 'color:var(--green);'}">${remain !== null ? remain.toLocaleString() : '—'}</td>`;
+
+      return `<tr>
+        <td style="font-family:var(--mono); font-size:12px;">${table}${isCascade ? ' <span class="badge badge-dim" style="font-size:10px;">cascade</span>' : ''}</td>
+        ${totalCell}${deleteCell}${remainCell}
+      </tr>`;
+    }).join('');
+
+    document.getElementById('prune-preview-body').innerHTML = rows;
+    document.getElementById('prune-preview-total-all').textContent    = grandTotal.toLocaleString();
+    document.getElementById('prune-preview-total-delete').textContent = grandDelete.toLocaleString();
+    document.getElementById('prune-preview-total-remain').textContent = grandRemain.toLocaleString();
+    document.getElementById('prune-preview-error').style.display = 'none';
+  }
+
+  function onPruneConfirmInput() {
+    const ok  = document.getElementById('prune-confirm-input').value === 'DELETE';
+    const btn = document.getElementById('prune-execute-btn');
+    btn.disabled       = !ok;
+    btn.style.opacity  = ok ? '1'       : '.4';
+    btn.style.cursor   = ok ? 'pointer' : 'not-allowed';
+  }
+
+  async function runPruneExecute() {
+    const cutoff = localToUtcStr(document.getElementById('prune-cutoff').value);
+    const tables = getSelectedTables();
+    const btn    = document.getElementById('prune-execute-btn');
+    const errEl  = document.getElementById('prune-preview-error');
+    errEl.style.display = 'none';
+
+    btn.disabled = true;
+    btn.textContent = 'Pruning…';
+
+    try {
+      const resp = await fetch('/api/db/prune/execute', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ cutoff, tables }),
+      });
+      const d = await resp.json();
+      if (!resp.ok) {
+        errEl.textContent = d.detail || d.error || 'Prune failed.';
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Execute Prune';
+        return;
+      }
+      renderPruneResult(d);
+      showPrunePhase('result');
+    } catch(e) {
+      errEl.textContent = 'Request failed: ' + e.message;
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Execute Prune';
+    }
+  }
+
+  function renderPruneResult(data) {
+    const cascadeOnly = new Set(pruneTablesMeta.cascade_only);
+    const rows = Object.entries(data.deleted).map(([table, count]) => {
+      const isCascade = cascadeOnly.has(table);
+      const display   = isCascade ? '<em style="color:var(--text-dim)">via cascade</em>' : count.toLocaleString();
+      return `<tr>
+        <td style="font-family:var(--mono); font-size:12px;">${table}</td>
+        <td style="text-align:right; font-family:var(--mono); font-size:12px; color:var(--green);">${display}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('prune-result-body').innerHTML = rows;
+    const note = document.getElementById('prune-backup-note');
+    note.textContent = data.backup ? 'Backup saved to: ' + data.backup : '';
+  }
+
+  document.getElementById('prune-modal').addEventListener('click', function(e) {
+    if (e.target === this) closePruneModal();
+  });
 </script>
 {% endblock %}

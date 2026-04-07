@@ -494,6 +494,69 @@ def db_download():
         return redirect(url_for("db_view"))
 
 
+# ── DB pruning ────────────────────────────────────────────────────────────────
+
+@app.route("/api/db/prune/tables")
+@login_required
+def prune_tables_proxy():
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/database/prune/tables",
+            headers=fastapi_headers(),
+            timeout=5,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+@app.route("/api/db/prune/preview", methods=["POST"])
+@login_required
+def prune_preview_proxy():
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/database/prune/preview",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=30,
+        )
+        result = resp.json()
+        if resp.ok and "counts" in result:
+            # Enrich with current total row counts so the UI can show rows remaining.
+            # Cascade-only tables have no direct timestamp column so we skip them.
+            totals = {}
+            _cascade_only = {"mood_labels", "mood_associations"}
+            try:
+                conn = get_db()
+                for table in result["counts"]:
+                    if table not in _cascade_only:
+                        row = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()
+                        totals[table] = row[0] if row else 0
+                conn.close()
+            except Exception:
+                pass
+            result["totals"] = totals
+        return (json.dumps(result), resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/db/prune/execute", methods=["POST"])
+@login_required
+def prune_execute_proxy():
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/database/prune/execute",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=60,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
 # ── Cron status ───────────────────────────────────────────────────────────────
 
 @app.route("/crons")
