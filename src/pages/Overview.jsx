@@ -4,6 +4,7 @@ import { apiJson } from '../api'
 import { Badge } from '../components/Badge'
 import { StatTile } from '../components/StatTile'
 import { Card } from '../components/Card'
+import { timeSince } from '../utils'
 
 const SOURCE_LABELS = {
   location_shortcuts: 'Location (Shortcuts)',
@@ -16,15 +17,6 @@ const SOURCE_LABELS = {
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }
 
-function timeSince(ts) {
-  if (!ts) return '—'
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  const mins = Math.floor((Date.now() - d) / 60000)
-  if (isNaN(mins)) return '—'
-  if (mins < 60)   return mins + 'm ago'
-  if (mins < 1440) return Math.floor(mins / 60) + 'h ago'
-  return Math.floor(mins / 1440) + 'd ago'
-}
 
 function staleVariant(ts) {
   if (!ts) return 'red'
@@ -35,14 +27,15 @@ function staleVariant(ts) {
 }
 
 export default function Overview() {
-  const [overview, setOverview] = useState(null)
-  const [status,   setStatus]   = useState(null)
-  const [backups,  setBackups]  = useState(null)
+  const [overview,   setOverview]   = useState(null)
+  const [status,     setStatus]     = useState(null)
+  const [backups,    setBackups]    = useState(null)
+  const [fetchError, setFetchError] = useState(null)
 
   useEffect(() => {
-    apiJson('/api/overview').then(setOverview).catch(() => {})
-    apiJson('/api/status').then(setStatus).catch(() => {})
-    apiJson('/api/backups').then(setBackups).catch(() => {})
+    apiJson('/api/overview').then(setOverview).catch(() => setFetchError('Failed to load overview data'))
+    apiJson('/api/status').then(setStatus).catch(() => setFetchError('Failed to load status data'))
+    apiJson('/api/backups').then(setBackups).catch(() => setFetchError('Failed to load backup data'))
   }, [])
 
   const h = overview?.health || {}
@@ -56,6 +49,12 @@ export default function Overview() {
         <h1>Overview</h1>
         <p>System health and quick stats — {nowStr}</p>
       </div>
+
+      {fetchError && (
+        <div style={{ fontFamily:'var(--mono)', fontSize:'12px', color:'var(--red)', marginBottom:'16px' }}>
+          {fetchError}
+        </div>
+      )}
 
       {/* System health */}
       <div style={{ marginBottom: '8px' }}><span className="card-title">System Health</span></div>

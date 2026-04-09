@@ -6,7 +6,7 @@
  * @param {string}  [valueStyle]   - extra inline style for the value element
  */
 export function StatTile({ label, value, sub, pct, valueStyle }) {
-  const barClass = pct > 85 ? 'danger' : pct > 70 ? 'warn' : ''
+  const barClass = pct != null && !isNaN(pct) ? (pct > 85 ? 'danger' : pct > 70 ? 'warn' : '') : ''
 
   return (
     <div className="stat">

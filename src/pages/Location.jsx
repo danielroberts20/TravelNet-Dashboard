@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiJson } from '../api'
+import { timeSince } from '../utils'
 
 const BLUE   = '#3d8ef0'
 const ORANGE = '#f0913d'
@@ -13,13 +14,6 @@ function formatTs(ts) {
        + ' ' + d.toLocaleDateString([], { day:'2-digit', month:'short' })
 }
 
-function timeSince(ts) {
-  const d    = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  const mins = Math.floor((Date.now() - d) / 60000)
-  if (mins < 60)   return mins + 'm ago'
-  if (mins < 1440) return Math.floor(mins / 60) + 'h ago'
-  return Math.floor(mins / 1440) + 'd ago'
-}
 
 function toEpoch(ts) {
   if (typeof ts === 'number') return ts
@@ -153,7 +147,7 @@ export default function Location() {
                       + (p.speed    != null ? `\nSpeed: ${(p.speed * 3.6).toFixed(1)} km/h` : '')
                       + (p.battery  != null ? `\nBattery: ${Math.round(p.battery * 100)}%` : '')
             return (
-              <CircleMarker key={i} center={[p.lat, p.lon]}
+              <CircleMarker key={p.ts ?? i} center={[p.lat, p.lon]}
                             radius={isLast ? 7 : 4}
                             color={isLast ? GREEN : BLUE}
                             fillColor={isLast ? GREEN : BLUE}
@@ -175,7 +169,7 @@ export default function Location() {
                       + (p.battery  != null ? `\nBattery: ${p.battery}%` : '')
                       + (p.device   ? `\nDevice: ${p.device}` : '')
             return (
-              <CircleMarker key={i} center={[p.lat, p.lon]}
+              <CircleMarker key={p.ts ?? i} center={[p.lat, p.lon]}
                             radius={isLast ? 7 : 4}
                             color={isLast ? GREEN : ORANGE}
                             fillColor={isLast ? GREEN : ORANGE}

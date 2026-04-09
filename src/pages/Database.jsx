@@ -378,7 +378,12 @@ export default function Database() {
       esRef.current = es
 
       es.onmessage = (event) => {
-        const data = JSON.parse(event.data)
+        let data
+        try {
+          data = JSON.parse(event.data)
+        } catch {
+          return
+        }
         if (data.done) {
           es.close()
           esRef.current = null

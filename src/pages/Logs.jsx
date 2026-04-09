@@ -55,6 +55,7 @@ function LogLine({ text, level }) {
 
 export default function Logs() {
   const [config, setConfig]           = useState(null)
+  const [configError, setConfigError] = useState(null)
   const [activeContainer, setActive]  = useState(null)
   const [lines, setLines]             = useState([])   // [{ text, level }]
   const [status, setStatus]           = useState('disconnected') // connected | disconnected | error
@@ -70,7 +71,7 @@ export default function Logs() {
     apiJson('/api/logs/config').then(d => {
       setConfig(d)
       setActive(d.container)
-    }).catch(() => {})
+    }).catch(() => setConfigError('Failed to load log config'))
   }, [])
 
   // Auto-scroll whenever lines change
@@ -117,10 +118,6 @@ export default function Logs() {
   // Reconnect if already streaming when container changes
   function switchContainer(name) {
     setActive(name)
-    if (connected) {
-      // Will reconnect with new container on next render cycle
-      setTimeout(() => {}, 0)
-    }
   }
 
   // When activeContainer changes and we're connected, reconnect
@@ -147,6 +144,12 @@ export default function Logs() {
           </code>
         </p>
       </div>
+
+      {configError && (
+        <div style={{ fontFamily:'var(--mono)', fontSize:'12px', color:'var(--red)', marginBottom:'12px' }}>
+          {configError}
+        </div>
+      )}
 
       <div className="log-toolbar">
         {/* Service toggle */}

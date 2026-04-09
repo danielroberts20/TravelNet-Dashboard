@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { apiJson } from '../api'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { timeSince } from '../utils'
 
 const KNOWN_JOBS = [
   'get_fx', 'get_fx_up_to_date', 'backfill_gbp', 'backfill_place',
@@ -11,12 +12,6 @@ const KNOWN_JOBS = [
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }
 
-function timeSince(ts) {
-  const mins = Math.floor((Date.now() / 1000 - ts) / 60)
-  if (mins < 60)   return mins + 'm ago'
-  if (mins < 1440) return Math.floor(mins / 60) + 'h ago'
-  return Math.floor(mins / 1440) + 'd ago'
-}
 
 function levelVariant(lvl) {
   if (!lvl) return 'dim'
@@ -27,9 +22,10 @@ function levelVariant(lvl) {
 }
 
 export default function CronJobs() {
-  const [data,     setData]     = useState(null)
-  const [runs,     setRuns]     = useState({})
-  const [loading,  setLoading]  = useState(true)
+  const [data,    setData]    = useState(null)
+  const [runs,    setRuns]    = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
 
   useEffect(() => {
     Promise.all([
@@ -38,7 +34,7 @@ export default function CronJobs() {
     ]).then(([d, r]) => {
       setData(d)
       setRuns(r)
-    }).catch(() => {}).finally(() => setLoading(false))
+    }).catch(() => setError('Failed to load cron data')).finally(() => setLoading(false))
   }, [])
 
   const scheduleRows    = data?.schedule_rows || []
@@ -53,6 +49,12 @@ export default function CronJobs() {
         <h1>Cron Jobs</h1>
         <p>Last-run status and scheduled task history. Crons run at host level.</p>
       </div>
+
+      {error && (
+        <div style={{ fontFamily:'var(--mono)', fontSize:'12px', color:'var(--red)', marginBottom:'16px' }}>
+          {error}
+        </div>
+      )}
 
       {/* Status cards */}
       <div style={{ marginBottom:'8px' }}><span className="card-title">Last Run Status</span></div>
@@ -161,7 +163,7 @@ export default function CronJobs() {
                   {jobs.map((row, i) => {
                     const lvl = row.levelname || row.level || ''
                     return (
-                      <tr key={i}>
+                      <tr key={row.ts || row.created || row.timestamp || i}>
                         <td><Badge variant={levelVariant(lvl)}>{lvl || '—'}</Badge></td>
                         <td className="dim">{row.name || row.logger || '—'}</td>
                         <td>{(row.message || row.msg || '—').slice(0, 160)}</td>
