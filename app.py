@@ -208,93 +208,16 @@ def table_exists(conn, name):
 # This means Flask still handles /api/*, /login, /logout, /logs/stream, etc.,
 # and React Router handles client-side navigation for everything else.
 
+@app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def spa(path):
-    _api_prefixes = ("api/", "static/", "logs/stream", "db/reset", "upload/revolut",
-                     "upload/wise", "db/table", "db/download", "manifest.json")
-    if any(path.startswith(p) for p in _api_prefixes):
-        abort(404)
+    # Let Flask's more-specific routes (all /api/*, /static/*, SSE, downloads) win.
+    # This catch-all only fires for paths with no other matching rule.
     return send_from_directory("static/dist", "index.html")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.route("/")
-@login_required
-def index():
-    # System health
-    disk  = shutil.disk_usage("/data")
-    cpu = psutil.cpu_percent(interval=None)
-    ram   = psutil.virtual_memory()
-    temps = {}
-    try:
-        for name, entries in psutil.sensors_temperatures().items():
-            for e in entries:
-                temps[e.label or name] = e.current
-    except Exception:
-        pass
-
-    health = {
-        "disk_used_gb":  round(disk.used  / 1e9, 2),
-        "disk_total_gb": round(disk.total / 1e9, 2),
-        "disk_pct":      round(disk.used / disk.total * 100, 1),
-        "cpu_pct":       cpu,
-        "ram_used_gb":   round(ram.used  / 1e9, 2),
-        "ram_total_gb":  round(ram.total / 1e9, 2),
-        "ram_pct":       ram.percent,
-        "temps":         temps,
-    }
-
-    # DB table stats
-    tables = []
-    try:
-        conn = get_db()
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        ).fetchall()
-        for r in rows:
-            tname = r["name"]
-            count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
-            tables.append({"name": tname, "count": count, "resettable": tname in RESETTABLE_TABLES})
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
-
-    # API usage — fetch both services
-    api_usage = {}
-    try:
-        conn = get_db()
-        if table_exists(conn, "api_usage"):
-            for service in ["exchangerate.host", "open-meteo"]:
-                row = conn.execute(
-                    "SELECT * FROM api_usage WHERE service = ? ORDER BY month DESC LIMIT 1",
-                    (service,)
-                ).fetchone()
-                if row:
-                    api_usage[service] = dict(row)
-        conn.close()
-    except Exception:
-        pass
-
-    # Recent log_digest entries
-    recent_logs = []
-    try:
-        conn = get_db()
-        if table_exists(conn, "log_digest"):
-            rows = conn.execute(
-                "SELECT * FROM log_digest ORDER BY rowid DESC LIMIT 20"
-            ).fetchall()
-            recent_logs = [dict(r) for r in rows]
-        conn.close()
-    except Exception:
-        pass
-
-    return render_template("index.html",
-                           health=health,
-                           tables=tables,
-                           api_usage=api_usage,
-                           recent_logs=recent_logs,
-                           now=datetime.now(timezone.utc))
 
 
 @app.route("/api/overview")
@@ -366,10 +289,6 @@ def overview_api():
 
 # ── DB section ────────────────────────────────────────────────────────────────
 
-@app.route("/db")
-@login_required
-def db_view():
-    return render_template("db.html")
 
 @app.route("/api/db/meta")
 @login_required
@@ -417,81 +336,6 @@ def db_tables_counts():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.route("/db/table/<table>")
-@login_required
-def db_table(table):
-    # Validate table exists in the DB (prevent arbitrary SQL injection via URL)
-    try:
-        conn = get_db()
-        exists = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name=?", (table,)
-        ).fetchone()
-        if not exists:
-            flash(f"Table '{table}' not found.", "error")
-            return redirect(url_for("db_view"))
-
-        pragma_rows = conn.execute(f"PRAGMA table_info([{table}])").fetchall()
-        if pragma_rows:
-            columns = [
-                {
-                    "cid":     r["cid"],
-                    "name":    r["name"],
-                    "type":    r["type"] or "—",
-                    "notnull": bool(r["notnull"]),
-                    "default": r["dflt_value"],
-                    "pk":      bool(r["pk"]),
-                }
-                for r in pragma_rows
-            ]
-        else:
-            # View — infer columns from first row
-            sample = conn.execute(f"SELECT * FROM [{table}] LIMIT 1").fetchone()
-            columns = [
-                {"cid": i, "name": k, "type": "—", "notnull": False, "default": None, "pk": False}
-                for i, k in enumerate(sample.keys())
-            ] if sample else []
-
-        total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
-
-        page      = max(1, int(request.args.get("page", 1)))
-        page_size = int(request.args.get("page_size", 50))
-        page_size = max(10, min(page_size, 500))
-        order     = request.args.get("order", "rowid")
-        direction = request.args.get("dir", "desc").lower()
-        if direction not in ("asc", "desc"):
-            direction = "desc"
-
-        # Validate order column is a real column name
-        col_names = [c["name"] for c in columns]
-        if order not in col_names and order != "rowid":
-            order = "rowid"
-
-        offset = (page - 1) * page_size
-        rows = conn.execute(
-            f"SELECT * FROM [{table}] ORDER BY [{order}] {direction.upper()} LIMIT ? OFFSET ?",
-            (page_size, offset)
-        ).fetchall()
-        rows = [list(r) for r in rows]
-
-        total_pages = max(1, -(-total // page_size))  # ceiling division
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
-        return redirect(url_for("db_view"))
-
-    return render_template(
-        "db_table.html",
-        table=table,
-        columns=columns,
-        rows=rows,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        order=order,
-        direction=direction,
-        resettable=table in RESETTABLE_TABLES,
-    )
 
 
 @app.route("/api/db/table/<table>")
@@ -585,30 +429,6 @@ def db_reset_api(table):
         return jsonify({"error": str(e)}), 503
 
 
-@app.route("/db/reset/<table>", methods=["POST"])
-@login_required
-def db_reset(table):
-    if table not in RESETTABLE_TABLES:
-        flash(f"Table '{table}' is not in the reset safelist.", "error")
-        return redirect(url_for("db_table", table=table))
-    confirm = request.form.get("confirm_table")
-    if confirm != table:
-        flash("Confirmation name did not match. Table not reset.", "error")
-        return redirect(url_for("db_table", table=table))
-    try:
-        resp = requests.get(
-            f"{FASTAPI_URL}/database/reset",
-            headers=fastapi_headers(),
-            params={"table": table},
-            timeout=10,
-        )
-        if resp.ok:
-            flash(f"Table '{table}' cleared successfully.", "success")
-        else:
-            flash(f"Reset failed: {resp.status_code} {resp.text}", "error")
-    except Exception as e:
-        flash(f"Reset failed: {e}", "error")
-    return redirect(url_for("db_table", table=table))
 
 @app.route("/db/table/<table>/download")
 @login_required
@@ -734,44 +554,6 @@ def prune_execute_proxy():
 
 # ── Cron status ───────────────────────────────────────────────────────────────
 
-@app.route("/crons")
-@login_required
-def crons():
-    # Read cron status from log_digest table, grouped by job name
-    jobs = []
-    try:
-        conn = get_db()
-        if table_exists(conn, "log_digest"):
-            rows = conn.execute("""
-                SELECT * FROM log_digest
-                ORDER BY rowid DESC
-            """).fetchall()
-            jobs = [dict(r) for r in rows]
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
-
-    # Also read api_usage
-    api_usage = {}
-    try:
-        conn = get_db()
-        if table_exists(conn, "api_usage"):
-            for service in ["exchangerate.host", "open-meteo"]:
-                row = conn.execute(
-                    "SELECT * FROM api_usage WHERE service = ? ORDER BY month DESC LIMIT 1",
-                    (service,)
-                ).fetchone()
-                if row:
-                    api_usage[service] = dict(row)
-        conn.close()
-    except Exception:
-        pass
-
-    now = datetime.now()
-    schedule_rows = sorted(SCHEDULE_ROWS, key=lambda r: _next_run(r[1], now))
-
-    return render_template("crons.html", jobs=jobs, api_usage=api_usage,
-                           schedule_rows=schedule_rows)
 
 
 @app.route("/api/crons")
@@ -813,20 +595,6 @@ def crons_api():
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
-@app.route("/logs")
-@login_required
-def logs():
-    lines = 200
-    try:
-        lines = int(request.args.get("lines", 200))
-    except ValueError:
-        pass
-    return render_template(
-        "logs.html",
-        container=DOCKER_CONTAINER,
-        trevor_container=TREVOR_CONTAINER,
-        lines=lines,
-    )
 
 
 @app.route("/api/logs/config")
@@ -882,10 +650,6 @@ def logs_stream():
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 
-@app.route("/upload")
-@login_required
-def upload():
-    return render_template("upload.html", fastapi_url=FASTAPI_URL)
 
 
 @app.route("/upload/revolut", methods=["POST"])
@@ -942,10 +706,6 @@ def fastapi_health():
 
 # ── Location map ──────────────────────────────────────────────────────────────
 
-@app.route("/location")
-@login_required
-def location():
-    return render_template("location.html")
 
 
 @app.route("/api/location-points")
@@ -1114,10 +874,6 @@ def cron_runs_api():
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-@app.route("/config")
-@login_required
-def config_page():
-    return render_template("config.html")
 
 
 @app.route("/api/config", methods=["GET"])
@@ -1205,10 +961,6 @@ def status_proxy():
 
 # ── Backups ───────────────────────────────────────────────────────────────────
 
-@app.route("/backups")
-@login_required
-def backups_page():
-    return render_template("backups.html")
 
 
 @app.route("/api/backups")

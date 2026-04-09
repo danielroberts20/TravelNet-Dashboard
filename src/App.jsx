@@ -1,12 +1,33 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Layout }       from './components/Layout'
+import Login            from './pages/Login'
+import Overview         from './pages/Overview'
+import Database         from './pages/Database'
+import DatabaseTable    from './pages/DatabaseTable'
+import CronJobs         from './pages/CronJobs'
+import Logs             from './pages/Logs'
+import Backups          from './pages/Backups'
+import Location         from './pages/Location'
+import Upload           from './pages/Upload'
+import Config           from './pages/Config'
+
 export default function App() {
   return (
-    <div style={{ padding: '32px' }}>
-      <h1 style={{ fontFamily: 'var(--mono)', color: 'var(--text-hi)', fontSize: '20px', letterSpacing: '.02em' }}>
-        TravelNet Dashboard
-      </h1>
-      <p style={{ color: 'var(--text-dim)', fontFamily: 'var(--mono)', fontSize: '13px', marginTop: '8px' }}>
-        React scaffold — Phase 1 ✓
-      </p>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route element={<Layout />}>
+          <Route path="/"                element={<Overview />} />
+          <Route path="/db"              element={<Database />} />
+          <Route path="/db/table/:table" element={<DatabaseTable />} />
+          <Route path="/crons"           element={<CronJobs />} />
+          <Route path="/logs"            element={<Logs />} />
+          <Route path="/backups"         element={<Backups />} />
+          <Route path="/location"        element={<Location />} />
+          <Route path="/upload"          element={<Upload />} />
+          <Route path="/config"          element={<Config />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
