@@ -10,6 +10,7 @@ import Backups          from './pages/Backups'
 import Location         from './pages/Location'
 import Upload           from './pages/Upload'
 import Config           from './pages/Config'
+import Trevor           from './pages/Trevor'
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/location"        element={<Location />} />
           <Route path="/upload"          element={<Upload />} />
           <Route path="/config"          element={<Config />} />
+          <Route path="/trevor"          element={<Trevor />} />
         </Route>
       </Routes>
     </BrowserRouter>

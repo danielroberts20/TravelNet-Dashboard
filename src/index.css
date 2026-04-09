@@ -711,3 +711,82 @@ td:hover { white-space: normal; word-break: break-all; }
 }
 .legend-dot  { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .legend-line { width: 24px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+
+/* ── Trevor page ─────────────────────────────────────── */
+.trevor-messages {
+  background: #08090c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  height: 500px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trevor-msg {
+  display: flex;
+  max-width: 80%;
+}
+.trevor-msg--user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+.trevor-msg--assistant {
+  align-self: flex-start;
+}
+.trevor-msg-content {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+.trevor-msg--user .trevor-msg-content {
+  background: var(--accent-lo);
+  border: 1px solid var(--accent);
+  color: var(--text-hi);
+}
+.trevor-msg--assistant .trevor-msg-content {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+}
+.trevor-thinking {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  animation: trevor-pulse 1.4s ease-in-out infinite;
+}
+@keyframes trevor-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1;   }
+}
+.trevor-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.trevor-textarea {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text-hi);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  min-height: 42px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.trevor-textarea:focus { border-color: var(--accent); }

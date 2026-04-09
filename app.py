@@ -109,6 +109,8 @@ FASTAPI_URL        = os.environ.get("FASTAPI_URL", "http://fastapi:8000")
 FASTAPI_API_KEY    = os.environ.get("FASTAPI_API_KEY", "")
 DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
 TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
+TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
+TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
@@ -203,16 +205,19 @@ def table_exists(conn, name):
     ).fetchone()
     return row is not None
 
+# ── Static assets (Vite build outputs to /assets/) ────────────────────────────
+@app.route("/assets/<path:filename>")
+def serve_assets(filename):
+    return send_from_directory("static/dist/assets", filename)
+
 # ── SPA catch-all ─────────────────────────────────────────────────────────────
 # Serves the React build for any URL not matched by an explicit Flask route.
-# This means Flask still handles /api/*, /login, /logout, /logs/stream, etc.,
+# This means Flask still handles /api/*, /assets/*, /login, /logout, etc.,
 # and React Router handles client-side navigation for everything else.
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def spa(path):
-    # Let Flask's more-specific routes (all /api/*, /static/*, SSE, downloads) win.
-    # This catch-all only fires for paths with no other matching rule.
     return send_from_directory("static/dist", "index.html")
 
 
@@ -975,6 +980,36 @@ def backups_proxy():
         if resp.ok:
             return jsonify(resp.json())
         return jsonify({"error": f"FastAPI returned {resp.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+# ── Trevor proxy ─────────────────────────────────────────────────────────────
+
+def trevor_headers():
+    return {"Content-Type": "application/json", "X-API-Key": TREVOR_API_KEY}
+
+@app.route("/api/trevor/health")
+@login_required
+def trevor_health():
+    try:
+        resp = requests.get(f"{TREVOR_URL}/health", timeout=5)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "unreachable"}), 503
+
+@app.route("/api/trevor/chat", methods=["POST"])
+@login_required
+def trevor_chat():
+    body = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{TREVOR_URL}/chat",
+            headers=trevor_headers(),
+            json=body,
+            timeout=120,  # LLM inference can be slow
+        )
+        return jsonify(resp.json()), resp.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 503
 

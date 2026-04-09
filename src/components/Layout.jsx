@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { to: '/location',icon: '◎', label: 'Location' },
   { to: '/upload',  icon: '↑', label: 'Upload' },
   { to: '/config',  icon: '⚙', label: 'Config' },
+  { to: '/trevor',  icon: '◉', label: 'Trevor' },
 ]
 
 export function Layout() {
