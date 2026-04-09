@@ -377,13 +377,25 @@ function chipKeydown(e, key) {
       groups[g].push([key, entry]);
     }
 
+    // Sort: groups with active overrides first (by override count desc), then alphabetically
+    const sortedGroups = Object.entries(groups).sort(([aName, aEntries], [bName, bEntries]) => {
+      const aOverrides = aEntries.filter(([, e]) => e.overridden).length;
+      const bOverrides = bEntries.filter(([, e]) => e.overridden).length;
+      if (aOverrides !== bOverrides) return bOverrides - aOverrides;
+      return aName.localeCompare(bName);
+    });
+
     const container = document.getElementById('config-content');
     container.innerHTML = '';
 
-    for (const [group, entries] of Object.entries(groups)) {
+    for (const [group, entries] of sortedGroups) {
+      const overrideCount = entries.filter(([, e]) => e.overridden).length;
+      const badge = overrideCount > 0
+        ? ` <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--accent);font-size:10px;">${overrideCount} overridden</span>`
+        : '';
       const div = document.createElement('div');
       div.className = 'config-group';
-      div.innerHTML = `<div class="config-group-title">${group}</div>`;
+      div.innerHTML = `<div class="config-group-title">${group}${badge}</div>`;
 
       for (const [key, entry] of entries) {
         const row = document.createElement('div');
