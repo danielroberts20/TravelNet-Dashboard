@@ -7,7 +7,8 @@ export default function Trevor() {
   const [history, setHistory]       = useState([])   // [{role, content}]
   const [input, setInput]           = useState('')
   const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState('')
+  const [error, setError]           = useState('')       // generic error string
+  const [warming, setWarming]       = useState(false)    // compute warming up
   const [status, setStatus]         = useState(null) // null | 'ok' | 'error'
   const [reasoning, setReasoning]   = useState(DEFAULT_REASONING)
   const messagesRef                 = useRef(null)
@@ -34,6 +35,7 @@ export default function Trevor() {
 
     setInput('')
     setError('')
+    setWarming(false)
     setLoading(true)
 
     const prevHistory = history
@@ -47,7 +49,15 @@ export default function Trevor() {
         body: JSON.stringify({ message: msg, history: prevHistory, reasoning_freedom: reasoning }),
       })
       const d = await resp.json()
-      if (!resp.ok) throw new Error(d.error || `HTTP ${resp.status}`)
+      if (!resp.ok) {
+        if (d.detail?.error === 'compute_warming_up') {
+          setWarming(true)
+        } else {
+          setError(d.detail?.message || d.error || `HTTP ${resp.status}`)
+        }
+        setHistory(prevHistory)
+        return
+      }
       // Server returns updated history including the assistant's reply
       setHistory(d.history)
     } catch (e) {
@@ -119,6 +129,15 @@ export default function Trevor() {
         )}
       </div>
 
+      {warming && (
+        <div style={{
+          fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--yellow)',
+          background: 'var(--yellow-lo)', border: '1px solid var(--yellow)',
+          borderRadius: 'var(--radius)', padding: '9px 12px', margin: '8px 0',
+        }}>
+          ◑ Compute warming up — a wake signal has been sent to the GPU. Try again in a moment.
+        </div>
+      )}
       {error && (
         <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--red)', margin: '8px 0' }}>
           ✗ {error}
