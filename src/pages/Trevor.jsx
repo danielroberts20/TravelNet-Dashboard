@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { apiFetch } from '../api'
 
 const DEFAULT_REASONING = 5
@@ -118,7 +119,11 @@ export default function Trevor() {
 
         {history.map((msg, i) => (
           <div key={i} className={'trevor-msg trevor-msg--' + msg.role}>
-            <div className="trevor-msg-content">{msg.content}</div>
+            <div className="trevor-msg-content">
+              {msg.role === 'assistant'
+                ? <ReactMarkdown>{msg.content}</ReactMarkdown>
+                : msg.content}
+            </div>
           </div>
         ))}
 
