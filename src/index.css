@@ -520,6 +520,74 @@ td:hover { white-space: normal; word-break: break-all; }
 }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
+/* ── Logs page ───────────────────────────────────────── */
+.log-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.log-toolbar input[type="number"] {
+  width: auto; min-width: 80px;
+  background: var(--surface); border: 1px solid var(--border2);
+  color: var(--text-hi); border-radius: 5px;
+  padding: 6px 10px; font-family: var(--mono); font-size: 12px;
+}
+.service-toggle { display: flex; gap: 3px; }
+.svc-btn {
+  font-size: 11px; padding: 4px 9px;
+  font-family: var(--mono);
+  border: 1px solid var(--border2);
+  background: none; border-radius: 4px;
+  color: var(--text-dim); cursor: pointer;
+}
+.svc-btn:hover { color: var(--text-hi); border-color: var(--text-dim); }
+.svc-btn.active {
+  border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.log-output {
+  background: #08090c;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  height: 560px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: #a8b8d0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-line { display: block; color: #a8b8d0; }
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; margin-right: 6px;
+}
+.status-dot.connected    { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.disconnected { background: var(--text-dim); }
+.status-dot.error        { background: var(--red); }
+.log-controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.level-filter { display: flex; gap: 3px; }
+.level-btn {
+  font-size: 11px; padding: 4px 9px;
+  font-family: var(--mono);
+  border: 1px solid var(--border2);
+  background: none; border-radius: 4px;
+  color: var(--text-dim); cursor: pointer;
+}
+.level-btn:hover { color: var(--text-hi); border-color: var(--text-dim); }
+.level-btn.active { border-color: var(--accent); color: var(--accent); }
+
+/* ── Database page ───────────────────────────────────── */
+.prune-table-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 6px 12px; margin-bottom: 20px;
+}
+.field-label {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim); display: block; margin-bottom: 6px;
+}
+
 /* ── Location page ───────────────────────────────────── */
 .map-wrap { position: relative; }
 .loading-overlay {
