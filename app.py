@@ -762,14 +762,14 @@ def location_points():
 
         # Check view exists — fall back gracefully if migration hasn't run yet
         view_exists = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='view' AND name='location_unified'"
+            "SELECT name FROM sqlite_master WHERE type='view' AND name='location_overland_cleaned'"
         ).fetchone()
 
         if view_exists:
             rows = conn.execute("""
                 SELECT timestamp, latitude, longitude, altitude, activity,
-                       battery, speed, device, accuracy, source
-                FROM location_unified
+                       battery_level AS battery, speed, device_id AS device, horizontal_accuracy AS accuracy, 'overland' AS source
+                FROM location_overland_cleaned
                 WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
                   AND datetime(timestamp) <= datetime(?, 'unixepoch')
                 ORDER BY timestamp ASC
