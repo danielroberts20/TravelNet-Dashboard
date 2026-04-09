@@ -1,3 +1,6 @@
-__pycache__/app.cpython-312.pyc
+__pycache__/
+*.pyc
 .claude/settings.json
 certs/
+node_modules/
+static/dist/
