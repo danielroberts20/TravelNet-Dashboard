@@ -11,7 +11,8 @@ from functools import wraps
 import requests
 from flask import ( #type: ignore
     Flask, render_template, request, redirect, make_response,
-    url_for, session, flash, jsonify, Response, stream_with_context
+    url_for, session, flash, jsonify, Response, stream_with_context,
+    send_from_directory, abort
 )
 
 import logging
@@ -108,6 +109,8 @@ FASTAPI_URL        = os.environ.get("FASTAPI_URL", "http://fastapi:8000")
 FASTAPI_API_KEY    = os.environ.get("FASTAPI_API_KEY", "")
 DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
 TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
+TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
+TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
@@ -155,30 +158,32 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if request.cookies.get(COOKIE_NAME) != DASHBOARD_TOKEN:
-            return redirect(url_for("login", next=request.url))
+            # API routes return 401 JSON; the SPA handles the redirect to /login
+            if request.path.startswith("/api/") or request.path.startswith("/logs/stream"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route("/login", methods=["POST"])
 def login():
-    if request.method == "POST":
-        if request.form.get("token") == DASHBOARD_TOKEN:
-            resp = redirect(request.args.get("next") or url_for("index"))
-            resp.set_cookie(
-                COOKIE_NAME,
-                DASHBOARD_TOKEN,
-                max_age=COOKIE_MAX_AGE,
-                httponly=True,
-                samesite="Lax",
-                secure=True,
-            )
-            return resp
-        flash("Incorrect token.", "error")
-    return render_template("login.html")
+    token = (request.get_json(silent=True) or {}).get("token") or request.form.get("token")
+    if token == DASHBOARD_TOKEN:
+        resp = make_response(jsonify({"ok": True}))
+        resp.set_cookie(
+            COOKIE_NAME,
+            DASHBOARD_TOKEN,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="Lax",
+            secure=True,
+        )
+        return resp
+    return jsonify({"error": "Invalid token"}), 401
 
 @app.route("/logout")
 def logout():
-    resp = redirect(url_for("login"))
+    resp = redirect("/")
     resp.delete_cookie(COOKIE_NAME)
     return resp
 
@@ -200,20 +205,38 @@ def table_exists(conn, name):
     ).fetchone()
     return row is not None
 
+# ── Static assets (Vite build outputs to /assets/) ────────────────────────────
+@app.route("/assets/<path:filename>")
+def serve_assets(filename):
+    return send_from_directory("static/dist/assets", filename)
+
+# ── SPA catch-all ─────────────────────────────────────────────────────────────
+# Serves the React build for any URL not matched by an explicit Flask route.
+# This means Flask still handles /api/*, /assets/*, /login, /logout, etc.,
+# and React Router handles client-side navigation for everything else.
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def spa(path):
+    return send_from_directory("static/dist", "index.html")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@app.route("/")
+
+
+@app.route("/api/overview")
 @login_required
-def index():
-    # System health
-    disk  = shutil.disk_usage("/data")
-    cpu = psutil.cpu_percent(interval=None)
-    ram   = psutil.virtual_memory()
+def overview_api():
+    """JSON equivalent of the index() template context — used by the React Overview page."""
+    disk = shutil.disk_usage("/data")
+    cpu  = psutil.cpu_percent(interval=None)
+    ram  = psutil.virtual_memory()
     temps = {}
     try:
         for name, entries in psutil.sensors_temperatures().items():
             for e in entries:
-                temps[e.label or name] = e.current
+                temps[e.label or name] = round(e.current, 1)
     except Exception:
         pass
 
@@ -228,8 +251,9 @@ def index():
         "temps":         temps,
     }
 
-    # DB table stats
     tables = []
+    api_usage = {}
+    recent_logs = []
     try:
         conn = get_db()
         rows = conn.execute(
@@ -239,14 +263,7 @@ def index():
             tname = r["name"]
             count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
             tables.append({"name": tname, "count": count, "resettable": tname in RESETTABLE_TABLES})
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
 
-    # API usage — fetch both services
-    api_usage = {}
-    try:
-        conn = get_db()
         if table_exists(conn, "api_usage"):
             for service in ["exchangerate.host", "open-meteo"]:
                 row = conn.execute(
@@ -255,37 +272,28 @@ def index():
                 ).fetchone()
                 if row:
                     api_usage[service] = dict(row)
-        conn.close()
-    except Exception:
-        pass
 
-    # Recent log_digest entries
-    recent_logs = []
-    try:
-        conn = get_db()
         if table_exists(conn, "log_digest"):
             rows = conn.execute(
                 "SELECT * FROM log_digest ORDER BY rowid DESC LIMIT 20"
             ).fetchall()
             recent_logs = [dict(r) for r in rows]
-        conn.close()
-    except Exception:
-        pass
 
-    return render_template("index.html",
-                           health=health,
-                           tables=tables,
-                           api_usage=api_usage,
-                           recent_logs=recent_logs,
-                           now=datetime.now(timezone.utc))
+        conn.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "health":      health,
+        "tables":      tables,
+        "api_usage":   api_usage,
+        "recent_logs": recent_logs,
+        "now":         datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # ── DB section ────────────────────────────────────────────────────────────────
 
-@app.route("/db")
-@login_required
-def db_view():
-    return render_template("db.html")
 
 @app.route("/api/db/meta")
 @login_required
@@ -333,18 +341,19 @@ def db_tables_counts():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.route("/db/table/<table>")
+
+
+@app.route("/api/db/table/<table>")
 @login_required
-def db_table(table):
-    # Validate table exists in the DB (prevent arbitrary SQL injection via URL)
+def db_table_api(table):
+    """JSON equivalent of db_table() — used by the React DatabaseTable page."""
     try:
         conn = get_db()
         exists = conn.execute(
             "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name=?", (table,)
         ).fetchone()
         if not exists:
-            flash(f"Table '{table}' not found.", "error")
-            return redirect(url_for("db_view"))
+            return jsonify({"error": f"Table '{table}' not found"}), 404
 
         pragma_rows = conn.execute(f"PRAGMA table_info([{table}])").fetchall()
         if pragma_rows:
@@ -360,15 +369,13 @@ def db_table(table):
                 for r in pragma_rows
             ]
         else:
-            # View — infer columns from first row
             sample = conn.execute(f"SELECT * FROM [{table}] LIMIT 1").fetchone()
             columns = [
                 {"cid": i, "name": k, "type": "—", "notnull": False, "default": None, "pk": False}
                 for i, k in enumerate(sample.keys())
             ] if sample else []
 
-        total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
-
+        total     = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
         page      = max(1, int(request.args.get("page", 1)))
         page_size = int(request.args.get("page_size", 50))
         page_size = max(10, min(page_size, 500))
@@ -377,7 +384,6 @@ def db_table(table):
         if direction not in ("asc", "desc"):
             direction = "desc"
 
-        # Validate order column is a real column name
         col_names = [c["name"] for c in columns]
         if order not in col_names and order != "rowid":
             order = "rowid"
@@ -389,37 +395,31 @@ def db_table(table):
         ).fetchall()
         rows = [list(r) for r in rows]
 
-        total_pages = max(1, -(-total // page_size))  # ceiling division
+        total_pages = max(1, -(-total // page_size))
         conn.close()
     except Exception as e:
-        flash(f"DB error: {e}", "error")
-        return redirect(url_for("db_view"))
+        return jsonify({"error": str(e)}), 500
 
-    return render_template(
-        "db_table.html",
-        table=table,
-        columns=columns,
-        rows=rows,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        order=order,
-        direction=direction,
-        resettable=table in RESETTABLE_TABLES,
-    )
+    return jsonify({
+        "table":       table,
+        "columns":     columns,
+        "rows":        rows,
+        "total":       total,
+        "page":        page,
+        "page_size":   page_size,
+        "total_pages": total_pages,
+        "order":       order,
+        "direction":   direction,
+        "resettable":  table in RESETTABLE_TABLES,
+    })
 
 
-@app.route("/db/reset/<table>", methods=["POST"])
+@app.route("/api/db/reset/<table>", methods=["POST"])
 @login_required
-def db_reset(table):
+def db_reset_api(table):
+    """JSON version of db_reset() — used by the React DatabaseTable page."""
     if table not in RESETTABLE_TABLES:
-        flash(f"Table '{table}' is not in the reset safelist.", "error")
-        return redirect(url_for("db_table", table=table))
-    confirm = request.form.get("confirm_table")
-    if confirm != table:
-        flash("Confirmation name did not match. Table not reset.", "error")
-        return redirect(url_for("db_table", table=table))
+        return jsonify({"error": f"Table '{table}' is not in the reset safelist"}), 400
     try:
         resp = requests.get(
             f"{FASTAPI_URL}/database/reset",
@@ -428,12 +428,12 @@ def db_reset(table):
             timeout=10,
         )
         if resp.ok:
-            flash(f"Table '{table}' cleared successfully.", "success")
-        else:
-            flash(f"Reset failed: {resp.status_code} {resp.text}", "error")
+            return jsonify({"ok": True, "message": f"Table '{table}' cleared successfully"})
+        return jsonify({"error": f"Reset failed: {resp.status_code} {resp.text}"}), 502
     except Exception as e:
-        flash(f"Reset failed: {e}", "error")
-    return redirect(url_for("db_table", table=table))
+        return jsonify({"error": str(e)}), 503
+
+
 
 @app.route("/db/table/<table>/download")
 @login_required
@@ -559,27 +559,19 @@ def prune_execute_proxy():
 
 # ── Cron status ───────────────────────────────────────────────────────────────
 
-@app.route("/crons")
-@login_required
-def crons():
-    # Read cron status from log_digest table, grouped by job name
-    jobs = []
-    try:
-        conn = get_db()
-        if table_exists(conn, "log_digest"):
-            rows = conn.execute("""
-                SELECT * FROM log_digest
-                ORDER BY rowid DESC
-            """).fetchall()
-            jobs = [dict(r) for r in rows]
-        conn.close()
-    except Exception as e:
-        flash(f"DB error: {e}", "error")
 
-    # Also read api_usage
+
+@app.route("/api/crons")
+@login_required
+def crons_api():
+    """JSON equivalent of crons() — used by the React CronJobs page."""
+    jobs = []
     api_usage = {}
     try:
         conn = get_db()
+        if table_exists(conn, "log_digest"):
+            rows = conn.execute("SELECT * FROM log_digest ORDER BY rowid DESC").fetchall()
+            jobs = [dict(r) for r in rows]
         if table_exists(conn, "api_usage"):
             for service in ["exchangerate.host", "open-meteo"]:
                 row = conn.execute(
@@ -589,32 +581,36 @@ def crons():
                 if row:
                     api_usage[service] = dict(row)
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
     now = datetime.now()
-    schedule_rows = sorted(SCHEDULE_ROWS, key=lambda r: _next_run(r[1], now))
+    schedule_rows = [
+        {
+            "script":      s,
+            "schedule":    sched,
+            "description": desc,
+            "next_run":    _next_run(sched, now).isoformat() if _next_run(sched, now) != datetime.max else None,
+        }
+        for s, sched, desc in sorted(SCHEDULE_ROWS, key=lambda r: _next_run(r[1], now))
+    ]
 
-    return render_template("crons.html", jobs=jobs, api_usage=api_usage,
-                           schedule_rows=schedule_rows)
+    return jsonify({"jobs": jobs, "api_usage": api_usage, "schedule_rows": schedule_rows})
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
-@app.route("/logs")
+
+
+@app.route("/api/logs/config")
 @login_required
-def logs():
-    lines = 200
-    try:
-        lines = int(request.args.get("lines", 200))
-    except ValueError:
-        pass
-    return render_template(
-        "logs.html",
-        container=DOCKER_CONTAINER,
-        trevor_container=TREVOR_CONTAINER,
-        lines=lines,
-    )
+def logs_config():
+    """Provides container names and defaults for the React Logs page."""
+    return jsonify({
+        "container":        DOCKER_CONTAINER,
+        "trevor_container": TREVOR_CONTAINER,
+        "default_lines":    200,
+    })
 
 
 @app.route("/logs/stream")
@@ -659,10 +655,6 @@ def logs_stream():
 
 # ── Upload ────────────────────────────────────────────────────────────────────
 
-@app.route("/upload")
-@login_required
-def upload():
-    return render_template("upload.html", fastapi_url=FASTAPI_URL)
 
 
 @app.route("/upload/revolut", methods=["POST"])
@@ -670,8 +662,7 @@ def upload():
 def upload_revolut():
     f = request.files.get("file")
     if not f:
-        flash("No file selected.", "error")
-        return redirect(url_for("upload"))
+        return jsonify({"error": "No file selected"}), 400
     try:
         resp = requests.post(
             f"{FASTAPI_URL}/transactions/revolut",
@@ -680,12 +671,10 @@ def upload_revolut():
             timeout=30,
         )
         if resp.ok:
-            flash(f"Revolut upload successful: {resp.json()}", "success")
-        else:
-            flash(f"FastAPI error {resp.status_code}: {resp.text}", "error")
+            return jsonify({"ok": True, "result": resp.json()})
+        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
     except Exception as e:
-        flash(f"Upload failed: {e}", "error")
-    return redirect(url_for("upload"))
+        return jsonify({"error": str(e)}), 503
 
 
 @app.route("/upload/wise", methods=["POST"])
@@ -693,8 +682,7 @@ def upload_revolut():
 def upload_wise():
     f = request.files.get("file")
     if not f:
-        flash("No file selected.", "error")
-        return redirect(url_for("upload"))
+        return jsonify({"error": "No file selected"}), 400
     try:
         resp = requests.post(
             f"{FASTAPI_URL}/transactions/wise",
@@ -703,12 +691,10 @@ def upload_wise():
             timeout=30,
         )
         if resp.ok:
-            flash(f"Wise upload successful: {resp.json()}", "success")
-        else:
-            flash(f"FastAPI error {resp.status_code}: {resp.text}", "error")
+            return jsonify({"ok": True, "result": resp.json()})
+        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
     except Exception as e:
-        flash(f"Upload failed: {e}", "error")
-    return redirect(url_for("upload"))
+        return jsonify({"error": str(e)}), 503
 
 
 # ── API health proxy ──────────────────────────────────────────────────────────
@@ -725,10 +711,6 @@ def fastapi_health():
 
 # ── Location map ──────────────────────────────────────────────────────────────
 
-@app.route("/location")
-@login_required
-def location():
-    return render_template("location.html")
 
 
 @app.route("/api/location-points")
@@ -897,10 +879,6 @@ def cron_runs_api():
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-@app.route("/config")
-@login_required
-def config_page():
-    return render_template("config.html")
 
 
 @app.route("/api/config", methods=["GET"])
@@ -988,10 +966,6 @@ def status_proxy():
 
 # ── Backups ───────────────────────────────────────────────────────────────────
 
-@app.route("/backups")
-@login_required
-def backups_page():
-    return render_template("backups.html")
 
 
 @app.route("/api/backups")
@@ -1006,6 +980,36 @@ def backups_proxy():
         if resp.ok:
             return jsonify(resp.json())
         return jsonify({"error": f"FastAPI returned {resp.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+# ── Trevor proxy ─────────────────────────────────────────────────────────────
+
+def trevor_headers():
+    return {"Content-Type": "application/json", "X-API-Key": TREVOR_API_KEY}
+
+@app.route("/api/trevor/health")
+@login_required
+def trevor_health():
+    try:
+        resp = requests.get(f"{TREVOR_URL}/health", timeout=5)
+        return jsonify(resp.json()), resp.status_code
+    except Exception as e:
+        return jsonify({"error": str(e), "status": "unreachable"}), 503
+
+@app.route("/api/trevor/chat", methods=["POST"])
+@login_required
+def trevor_chat():
+    body = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{TREVOR_URL}/chat",
+            headers=trevor_headers(),
+            json=body,
+            timeout=120,  # LLM inference can be slow
+        )
+        return jsonify(resp.json()), resp.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 503
 

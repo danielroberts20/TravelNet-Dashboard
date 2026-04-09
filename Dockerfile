@@ -1,3 +1,18 @@
+# ── Stage 1: frontend build ──────────────────────────────────────────────────
+FROM node:20-slim AS frontend
+
+WORKDIR /build
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY index.html vite.config.js ./
+COPY src/ ./src/
+
+RUN npm run build
+# Result: /build/static/dist/
+
+# ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -14,6 +29,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Replace any pre-built static/dist with the freshly built frontend
+COPY --from=frontend /build/static/dist/ ./static/dist/
 
 EXPOSE 5000
 
