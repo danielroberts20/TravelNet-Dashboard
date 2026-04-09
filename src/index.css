@@ -578,6 +578,99 @@ td:hover { white-space: normal; word-break: break-all; }
 .level-btn:hover { color: var(--text-hi); border-color: var(--text-dim); }
 .level-btn.active { border-color: var(--accent); color: var(--accent); }
 
+/* ── Config page ─────────────────────────────────────── */
+.config-group { margin-bottom: 28px; }
+.config-group-title {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 10px;
+}
+.config-row {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px;
+  display: grid; grid-template-columns: 1fr 1fr auto;
+  gap: 16px; align-items: center;
+}
+.config-row.overridden { border-left: 3px solid var(--accent); }
+.config-row.dirty      { border-left: 3px solid var(--yellow); }
+.config-key  { font-family: var(--mono); font-size: 13px; color: var(--text-hi); }
+.config-desc { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.config-type { font-size: 10px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; }
+.config-input-wrap { position: relative; }
+.config-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border2);
+  color: var(--text-hi); border-radius: var(--radius);
+  padding: 7px 10px; font-family: var(--mono); font-size: 12px; outline: none;
+}
+.config-input:focus    { border-color: var(--accent); }
+.config-input.modified { border-color: var(--yellow); }
+.config-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.config-default {
+  font-size: 11px; color: var(--text-dim); font-family: var(--mono); margin-top: 4px;
+}
+
+.chip-input {
+  display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  background: var(--bg); border: 1px solid var(--border2);
+  border-radius: var(--radius); padding: 6px 8px; min-height: 36px; cursor: text;
+}
+.chip-input:focus-within { border-color: var(--accent); }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-lo); color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 3px;
+  padding: 2px 6px; font-family: var(--mono); font-size: 11px;
+}
+.chip button {
+  background: none; border: none; color: var(--accent);
+  cursor: pointer; padding: 0; font-size: 13px; line-height: 1;
+}
+.chip button:hover { color: var(--red); }
+.chip-text-input {
+  background: none; border: none; outline: none;
+  color: var(--text-hi); font-family: var(--mono); font-size: 12px;
+  padding: 2px 4px; min-width: 140px; flex: 1;
+}
+
+.dict-editor {
+  background: var(--bg); border: 1px solid var(--border2);
+  border-radius: var(--radius); overflow: hidden;
+}
+.dict-row {
+  display: grid; grid-template-columns: 1fr 1fr auto;
+  border-bottom: 1px solid var(--border);
+}
+.dict-row input {
+  background: none; border: none; border-right: 1px solid var(--border);
+  color: var(--text-hi); font-family: var(--mono); font-size: 12px;
+  padding: 6px 10px; outline: none; width: 100%;
+}
+.dict-row input:focus { background: var(--surface); }
+.dict-row input:last-of-type { border-right: none; }
+.dict-remove {
+  background: none; border: none; color: var(--text-dim);
+  cursor: pointer; padding: 0 10px; font-size: 14px;
+}
+.dict-remove:hover { color: var(--red); }
+.dict-add {
+  display: block; width: 100%; background: none; border: none;
+  border-top: 1px solid var(--border);
+  color: var(--accent); font-family: var(--mono); font-size: 11px;
+  padding: 6px 10px; cursor: pointer; text-align: left;
+}
+.dict-add:hover { background: var(--surface); }
+
+.restart-banner, .restart-needed-banner {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--surface); border-radius: 8px; padding: 12px 20px;
+  align-items: center; gap: 14px; font-family: var(--mono); font-size: 13px;
+  z-index: 99; box-shadow: 0 4px 24px rgba(0,0,0,.4); display: none;
+}
+.restart-banner          { border: 1px solid var(--yellow); color: var(--yellow); }
+.restart-needed-banner   { border: 1px solid var(--accent); color: var(--accent); z-index: 98; }
+.restart-banner.visible,
+.restart-needed-banner.visible { display: flex; }
+
 /* ── Database page ───────────────────────────────────── */
 .prune-table-grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
