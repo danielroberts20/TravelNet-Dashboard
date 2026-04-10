@@ -52,6 +52,7 @@ SCHEDULE_ROWS = [
     ("check_journal_staleness.py", "every 4h",               "Alert if latest journal entry is older than the staleness threshold"),
     ("detect_timezone_transitions.py", "04:45 on Sunday",    "Scan location history and record IANA timezone transition events"),
     ("detect_country_transitions.py",  "05:00 on Sunday",    "Scan location history and record country transition events"),
+    ("detect_flights.py",              "05:20 on Sunday",    "Scan location gaps for likely flights and insert draft rows into flights table"),
 ]
 
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
