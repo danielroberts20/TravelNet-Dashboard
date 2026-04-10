@@ -8,6 +8,8 @@ const KNOWN_JOBS = [
   'get_fx', 'get_fx_up_to_date', 'backfill_gbp', 'backfill_place',
   'send_warn_error_log', 'reset_api_usage', 'get_weather', 'backup_db',
   'check_health_gaps', 'push_public_stats', 'geocode_places', 'run_tests',
+  'send_transaction_reminder', 'send_cron_digest', 'check_journal_staleness',
+  'detect_timezone_transitions', 'detect_country_transitions',
 ]
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }

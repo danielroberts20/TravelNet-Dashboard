@@ -47,7 +47,11 @@ SCHEDULE_ROWS = [
     ("geocode_places.py",          "04:30 daily",            "Geocode places with missing lat/lon data"),
     ("backfill_place.py",          "05:15 daily",            "Backfill missing place_id on location records"),
     ("run_tests.py",               "06:00 on 1st/15th",      "Run full pytest suite and email results (runs on host, not Docker)"),
-    ("crontab_tz.py",              "03:00 on 2nd/16th",      "Update system cron jobs to local timezone"),
+    ("crontab_tz.py",              "triggered via iOS Shortcut", "Update system cron jobs to local timezone (triggered externally, not scheduled)"),
+    ("send_cron_digest.py",        "09:00 daily",            "Safety-net flush of daily cron digest if any jobs are still missing"),
+    ("check_journal_staleness.py", "every 4h",               "Alert if latest journal entry is older than the staleness threshold"),
+    ("detect_timezone_transitions.py", "04:45 on Sunday",    "Scan location history and record IANA timezone transition events"),
+    ("detect_country_transitions.py",  "05:00 on Sunday",    "Scan location history and record country transition events"),
 ]
 
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
