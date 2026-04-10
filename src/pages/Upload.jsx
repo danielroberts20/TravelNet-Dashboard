@@ -106,6 +106,160 @@ function UploadCard({ title, description, accept, icon, hint, endpoint }) {
   )
 }
 
+function Field({ label, children }) {
+  return (
+    <div>
+      <label style={{ fontSize: '11px', color: 'var(--text-dim)', display: 'block', marginBottom: '5px',
+                      fontFamily: 'var(--mono)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+const inputStyle = {
+  background: 'var(--bg)', border: '1px solid var(--border2)', color: 'var(--text-hi)',
+  borderRadius: '5px', padding: '7px 10px', fontFamily: 'var(--mono)', fontSize: '13px',
+  width: '100%', outline: 'none', colorScheme: 'dark',
+}
+
+function FlightForm() {
+  const empty = {
+    origin_iata: '', destination_iata: '',
+    departed_at: '', arrived_at: '',
+    airline: '', flight_number: '', seat_class: '', notes: '',
+  }
+  const [fields, setFields] = useState(empty)
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  function set(k) { return e => setFields(f => ({ ...f, [k]: e.target.value })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setLoading(true)
+    setStatus(null)
+    const body = { ...fields }
+    // strip empty optional fields
+    Object.keys(body).forEach(k => { if (!body[k]) delete body[k] })
+    try {
+      const resp = await apiFetch('/upload/flight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const d = await resp.json()
+      if (resp.ok) {
+        const r = d.result
+        const dur = r.duration_mins != null ? `${Math.floor(r.duration_mins / 60)}h ${r.duration_mins % 60}m` : ''
+        const dist = r.distance_km != null ? `${r.distance_km.toLocaleString()} km` : ''
+        setStatus({ ok: true, msg: `Inserted — ${r.origin?.iata} → ${r.destination?.iata}  ·  ${dur}  ·  ${dist}` })
+        setFields(empty)
+      } else {
+        setStatus({ ok: false, msg: d.error || 'Upload failed' })
+      }
+    } catch (err) {
+      setStatus({ ok: false, msg: err.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const grid2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }
+  const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }
+
+  return (
+    <Card title="Flight" style={{ marginTop: '24px' }}>
+      <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
+        Log a flight manually. Departure and arrival times are interpreted as local airport times —
+        timezone conversion is handled server-side from airport coordinates.
+      </p>
+      {status && (
+        <div style={{
+          padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
+          fontFamily: 'var(--mono)', marginBottom: '14px',
+          background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
+          border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
+          color: status.ok ? 'var(--green)' : 'var(--red)',
+          wordBreak: 'break-all',
+        }}>{status.msg}</div>
+      )}
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+          <div style={grid2}>
+            <Field label="Origin IATA *">
+              <input style={inputStyle} value={fields.origin_iata} onChange={set('origin_iata')}
+                     placeholder="SYD" maxLength={3} required
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+            <Field label="Destination IATA *">
+              <input style={inputStyle} value={fields.destination_iata} onChange={set('destination_iata')}
+                     placeholder="LHR" maxLength={3} required
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+          </div>
+
+          <div style={grid2}>
+            <Field label="Departed (local) *">
+              <input type="datetime-local" style={inputStyle} value={fields.departed_at}
+                     onChange={set('departed_at')} required
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+            <Field label="Arrived (local) *">
+              <input type="datetime-local" style={inputStyle} value={fields.arrived_at}
+                     onChange={set('arrived_at')} required
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+          </div>
+
+          <div style={grid3}>
+            <Field label="Airline">
+              <input style={inputStyle} value={fields.airline} onChange={set('airline')}
+                     placeholder="Qantas"
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+            <Field label="Flight number">
+              <input style={inputStyle} value={fields.flight_number} onChange={set('flight_number')}
+                     placeholder="QF1"
+                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+            </Field>
+            <Field label="Seat class">
+              <select style={inputStyle} value={fields.seat_class} onChange={set('seat_class')}
+                      onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                      onBlur={e => e.target.style.borderColor = 'var(--border2)'}>
+                <option value="">—</option>
+                <option value="economy">Economy</option>
+                <option value="premium_economy">Premium Economy</option>
+                <option value="business">Business</option>
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Notes">
+            <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '60px' }}
+                      value={fields.notes} onChange={set('notes')} placeholder="Optional notes"
+                      onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                      onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+          </Field>
+
+          <button type="submit" disabled={loading} className="btn btn-primary"
+                  style={{ alignSelf: 'flex-start', opacity: loading ? 0.5 : 1 }}>
+            {loading ? 'Submitting…' : '↑ Log Flight'}
+          </button>
+        </div>
+      </form>
+    </Card>
+  )
+}
+
 export default function Upload() {
   const [apiStatus, setApiStatus] = useState(null)
 
@@ -149,6 +303,8 @@ export default function Upload() {
           endpoint="/upload/wise"
         />
       </div>
+
+      <FlightForm />
 
       <Card title="FastAPI Status" style={{ marginTop: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>

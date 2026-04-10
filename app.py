@@ -701,6 +701,24 @@ def upload_wise():
         return jsonify({"error": str(e)}), 503
 
 
+@app.route("/upload/flight", methods=["POST"])
+@login_required
+def upload_flight():
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/upload/flight",
+            json=data,
+            headers=fastapi_headers(),
+            timeout=15,
+        )
+        if resp.ok:
+            return jsonify({"ok": True, "result": resp.json()})
+        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
 # ── API health proxy ──────────────────────────────────────────────────────────
 
 @app.route("/api/fastapi-health")
