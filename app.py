@@ -39,7 +39,7 @@ SCHEDULE_ROWS = [
     ("tailscale cert",             "00:00 on 1st",           "Renew Tailscale TLS certificate"),
     ("reboot",                     "04:00 on 1st",           "Monthly host reboot"),
     ("get_weather.py",             "04:00 on 14th",          "Get weather day for previous 40 days, starting from the 7th"),
-    ("backup_db_to_cloudfare.sh",  "03:00 on 2nd",           "Backup DB to Cloudflare R2"),
+    ("backup_db_to_cloudfare.sh",  "03:00 on 2nd/16th",           "Backup DB to Cloudflare R2"),
     ("send_transaction_reminder.py","08:00 on 2nd",          "Send push notification reminder to upload monthly transactions"),
     ("backup_db.py",               "01:00 on Sunday",        "Backup full DB to local storage, keep only last 4 weeks"),
     ("check_health_gaps.py",       "05:50 on Monday",        "Look for missing expected metrics in last week of health data"),

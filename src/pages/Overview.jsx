@@ -17,6 +17,13 @@ const SOURCE_LABELS = {
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }
 
+const formatPct = v =>
+  v != null ? (
+    <>
+      {v}
+      <span style={{ fontSize: '14px', color: 'var(--text-dim)' }}> %</span>
+    </>
+  ) : '—';
 
 function staleVariant(ts) {
   if (!ts) return 'red'
@@ -59,12 +66,12 @@ export default function Overview() {
       {/* System health */}
       <div style={{ marginBottom: '8px' }}><span className="card-title">System Health</span></div>
       <div className="grid grid-4" style={{ marginBottom: '24px' }}>
-        <StatTile label="CPU"        value={h.cpu_pct ?? '—'} valueStyle={{ fontSize: '26px' }}
-                  pct={h.cpu_pct} />
-        <StatTile label="RAM"        value={h.ram_pct ?? '—'}
+        <StatTile label="CPU"        value={formatPct(h.cpu_pct)} valueStyle={{ fontSize: '26px' }}
+                  sub='' pct={h.cpu_pct} />
+        <StatTile label="RAM"        value={formatPct(h.ram_pct)}
                   sub={h.ram_used_gb != null ? `${h.ram_used_gb} / ${h.ram_total_gb} GB` : undefined}
                   pct={h.ram_pct} />
-        <StatTile label="Disk (data)" value={h.disk_pct ?? '—'}
+        <StatTile label="Disk (data)" value={formatPct(h.disk_pct)}
                   sub={h.disk_used_gb != null ? `${h.disk_used_gb} / ${h.disk_total_gb} GB` : undefined}
                   pct={h.disk_pct} />
         {h.temps && Object.keys(h.temps).length > 0
@@ -73,7 +80,7 @@ export default function Overview() {
                         value={<>{temp}<span style={{ fontSize:'14px', color:'var(--text-dim)' }}>°C</span></>}
                         pct={Math.min(temp / 85 * 100, 100)} />
             ))
-          : <StatTile label="Temperature" value={<span className="dim" style={{ fontSize:'16px' }}>N/A</span>} />
+          : <StatTile label="Temperature" value={<span className="dim" style={{ fontSize:'16px' }}>N/A</span>} sub='' />
         }
       </div>
 
