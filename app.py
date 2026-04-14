@@ -4,7 +4,7 @@ import sqlite3
 import subprocess
 import shutil
 import psutil #type: ignore
-import calendar
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
@@ -30,79 +30,6 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
 
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
 
-SCHEDULE_ROWS = [
-    ("get_fx.py",                  "02:00 daily",            "Pull FX rates for 2 days ago"),
-    ("get_fx_up_to_date.py",       "03:00 on 8th/15th/22nd/28th", "Pull missing FX rates from exchangerate.host"),
-    ("backfill_gbp.py",            "02:30 on 2nd",           "Backfill NULL amount_gbp from DB FX data"),
-    ("send_warn_error_log.py",     "06:00 daily",            "Flush and email WARNING+ log records"),
-    ("reset_api_usage.py",         "00:00 on 1st",           "Reset monthly API call counters"),
-    ("tailscale cert",             "00:00 on 1st",           "Renew Tailscale TLS certificate"),
-    ("reboot",                     "04:00 on 1st",           "Monthly host reboot"),
-    ("get_weather.py",             "04:00 on 14th",          "Get weather day for previous 40 days, starting from the 7th"),
-    ("backup_db_to_cloudfare.sh",  "03:00 on 2nd/16th",           "Backup DB to Cloudflare R2"),
-    ("send_transaction_reminder.py","08:00 on 2nd",          "Send push notification reminder to upload monthly transactions"),
-    ("backup_db.py",               "01:00 on Sunday",        "Backup full DB to local storage, keep only last 4 weeks"),
-    ("check_health_gaps.py",       "05:50 on Monday",        "Look for missing expected metrics in last week of health data"),
-    ("push_public_stats.py",       "07:00 daily",            "Build public stats payload and push to GitHub repo as warm cache"),
-    ("geocode_places.py",          "04:30 daily",            "Geocode places with missing lat/lon data"),
-    ("backfill_place.py",          "05:15 daily",            "Backfill missing place_id on location records"),
-    ("run_tests.py",               "06:00 on 1st/15th",      "Run full pytest suite and email results (runs on host, not Docker)"),
-    ("crontab_tz.py",              "triggered via iOS Shortcut", "Update system cron jobs to local timezone (triggered externally, not scheduled)"),
-    ("send_cron_digest.py",        "09:00 daily",            "Safety-net flush of daily cron digest if any jobs are still missing"),
-    ("check_journal_staleness.py", "every 4h",               "Alert if latest journal entry is older than the staleness threshold"),
-    ("detect_timezone_transitions.py", "04:45 on Sunday",    "Scan location history and record IANA timezone transition events"),
-    ("detect_country_transitions.py",  "05:00 on Sunday",    "Scan location history and record country transition events"),
-    ("detect_flights.py",              "05:20 on Sunday",    "Scan location gaps for likely flights and insert draft rows into flights table"),
-]
-
-_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
-             "friday": 4, "saturday": 5, "sunday": 6}
-
-def _next_run(schedule: str, now: datetime) -> datetime:
-    """Compute next run datetime from a human-readable schedule string."""
-    m = re.match(r'(\d{2}):(\d{2})\s+(.*)', schedule)
-    if not m:
-        return datetime.max
-    hour, minute, spec = int(m.group(1)), int(m.group(2)), m.group(3).strip()
-
-    if spec == "daily":
-        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
-
-    if spec.startswith("on "):
-        spec = spec[3:].strip()
-
-        # Named weekday
-        if spec.lower() in _WEEKDAYS:
-            target_wd = _WEEKDAYS[spec.lower()]
-            candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if candidate <= now:
-                candidate += timedelta(days=1)
-            while candidate.weekday() != target_wd:
-                candidate += timedelta(days=1)
-            return candidate
-
-        # Day-of-month list: "2nd", "8th/15th/22nd/28th", "1st/15th", etc.
-        days = [int(re.match(r'(\d+)', p.strip()).group(1))
-                for p in spec.split('/') if re.match(r'(\d+)', p.strip())]
-        if days:
-            candidates = []
-            for d in days:
-                for month_offset in range(3):
-                    year  = now.year + (now.month - 1 + month_offset) // 12
-                    month = (now.month - 1 + month_offset) % 12 + 1
-                    if d > calendar.monthrange(year, month)[1]:
-                        continue
-                    dt = now.replace(year=year, month=month, day=d,
-                                     hour=hour, minute=minute, second=0, microsecond=0)
-                    if dt > now:
-                        candidates.append(dt)
-            if candidates:
-                return min(candidates)
-
-    return datetime.max
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -116,6 +43,7 @@ DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
 TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
 TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
+PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://pi-server.tail186ff8.ts.net:4200/api")
 
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
@@ -562,14 +490,136 @@ def prune_execute_proxy():
         return jsonify({"error": str(e)}), 503
 
 
-# ── Cron status ───────────────────────────────────────────────────────────────
+# ── Schedule / Prefect ────────────────────────────────────────────────────────
 
+try:
+    from croniter import croniter as _croniter
+    _HAS_CRONITER = True
+except ImportError:
+    _HAS_CRONITER = False
+
+_ORDINALS = {
+    1:'1st', 2:'2nd', 3:'3rd', 4:'4th', 5:'5th', 6:'6th', 7:'7th', 8:'8th',
+    9:'9th', 10:'10th', 11:'11th', 12:'12th', 13:'13th', 14:'14th', 15:'15th',
+    16:'16th', 17:'17th', 18:'18th', 19:'19th', 20:'20th', 21:'21st', 22:'22nd',
+    23:'23rd', 24:'24th', 25:'25th', 26:'26th', 27:'27th', 28:'28th',
+    29:'29th', 30:'30th', 31:'31st',
+}
+_DOW_NAMES = {0:'Sunday', 1:'Monday', 2:'Tuesday', 3:'Wednesday',
+              4:'Thursday', 5:'Friday', 6:'Saturday'}
+
+
+def _humanize_cron(expr: str) -> str:
+    """Convert a 5-field cron expression to a human-readable string."""
+    try:
+        parts = expr.strip().split()
+        if len(parts) != 5:
+            return expr
+        minute, hour, dom, month, dow = parts
+
+        # Every N hours: "0 */4 * * *"
+        if '/' in hour:
+            n = hour.split('/')[1]
+            if n.isdigit():
+                return f"Every {n} hours"
+            return expr
+
+        if not (minute.isdigit() and hour.isdigit()):
+            return expr
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+
+        # Daily: "0 2 * * *"
+        if dom == '*' and month == '*' and dow == '*':
+            return f"Daily at {time_str}"
+
+        # Specific weekday: "0 1 * * 0"
+        if dom == '*' and month == '*' and dow != '*' and dow.isdigit():
+            name = _DOW_NAMES.get(int(dow), f'Weekday {dow}')
+            return f"{name}s at {time_str}"
+
+        # Day(s) of month: "0 3 2,16 * *" or "0 0 1 * *"
+        if dom != '*' and month == '*' and dow == '*':
+            days = [int(d) for d in dom.split(',') if d.isdigit()]
+            if not days:
+                return expr
+            day_strs = [_ORDINALS.get(d, f'{d}th') for d in days]
+            if len(day_strs) == 1:
+                return f"{day_strs[0]} of month at {time_str}"
+            if len(day_strs) == 2:
+                return f"{day_strs[0]} & {day_strs[1]} at {time_str}"
+            return ', '.join(day_strs[:-1]) + f' & {day_strs[-1]} at {time_str}'
+
+        return expr
+    except Exception:
+        return expr
+
+
+def _cron_is_daily(expr: str) -> bool:
+    """True for crons that fire exactly once per day (e.g. '0 2 * * *')."""
+    try:
+        parts = expr.strip().split()
+        _, hour, dom, month, dow = parts
+        return dom == '*' and month == '*' and dow == '*' and '/' not in hour
+    except Exception:
+        return False
+
+
+def _cron_next_run(expr: str, tz_name: str) -> float | None:
+    """Return the next scheduled run as a Unix timestamp, or None."""
+    if not _HAS_CRONITER:
+        return None
+    try:
+        tz  = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+        it  = _croniter(expr, now)
+        return it.get_next(datetime).timestamp()
+    except Exception:
+        return None
+
+
+def _fmt_duration(secs: float) -> str:
+    s = int(secs)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h {m}m {sec}s"
+    if m:
+        return f"{m}m {sec}s"
+    return f"{sec}s"
+
+
+def _format_prefect_run(run: dict, tz_name: str) -> dict:
+    """Format a Prefect flow run for the dashboard. Times in the flow's scheduled timezone."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+
+    def fmt_dt(iso_str):
+        if not iso_str:
+            return None
+        try:
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return iso_str
+
+    state      = run.get("state") or {}
+    total_secs = run.get("total_run_time")
+    start_iso  = run.get("start_time")
+    return {
+        "state_type":     state.get("type"),
+        "state_name":     state.get("name"),
+        "start_time":     fmt_dt(start_iso),
+        "start_time_iso": start_iso,
+        "duration_human": _fmt_duration(total_secs) if total_secs else None,
+    }
 
 
 @app.route("/api/crons")
 @login_required
 def crons_api():
-    """JSON equivalent of crons() — used by the React CronJobs page."""
+    """Log digest and API usage — used by the React Schedule page."""
     jobs = []
     api_usage = {}
     try:
@@ -588,19 +638,118 @@ def crons_api():
         conn.close()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    return jsonify({"jobs": jobs, "api_usage": api_usage})
 
-    now = datetime.now()
-    schedule_rows = [
-        {
-            "script":      s,
-            "schedule":    sched,
-            "description": desc,
-            "next_run":    _next_run(sched, now).isoformat() if _next_run(sched, now) != datetime.max else None,
-        }
-        for s, sched, desc in sorted(SCHEDULE_ROWS, key=lambda r: _next_run(r[1], now))
-    ]
 
-    return jsonify({"jobs": jobs, "api_usage": api_usage, "schedule_rows": schedule_rows})
+@app.route("/api/prefect/deployments")
+@login_required
+def prefect_deployments():
+    """Proxy Prefect deployment list with last-run status for the Schedule page."""
+    try:
+        deps_resp = requests.post(
+            f"{PREFECT_API_URL}/deployments/filter",
+            json={"limit": 200, "offset": 0},
+            timeout=10,
+        )
+        deps_resp.raise_for_status()
+        deployments = deps_resp.json()
+
+        if not deployments:
+            return jsonify([])
+
+        dep_ids = [d["id"] for d in deployments]
+
+        runs_resp = requests.post(
+            f"{PREFECT_API_URL}/flow_runs/filter",
+            json={
+                "limit": 200,
+                "sort": "START_TIME_DESC",
+                "flow_runs": {"deployment_id": {"any_": dep_ids}},
+            },
+            timeout=10,
+        )
+        runs_resp.raise_for_status()
+
+        # Keep most recent run per deployment (already sorted desc)
+        last_run_by_dep: dict = {}
+        for run in runs_resp.json():
+            dep_id = run.get("deployment_id")
+            if dep_id and dep_id not in last_run_by_dep:
+                last_run_by_dep[dep_id] = run
+
+        result = []
+        for dep in sorted(deployments, key=lambda d: (d.get("name") or "").lower()):
+            # Prefect 3.x uses a `schedules` list; fall back to legacy `schedule` dict
+            schedules    = dep.get("schedules") or []
+            active_sched = next((s for s in schedules if s.get("active")), None)
+            sched_inner  = (active_sched or {}).get("schedule") or dep.get("schedule") or {}
+            cron_expr    = sched_inner.get("cron")
+            tz_name      = sched_inner.get("timezone", "UTC") if cron_expr else "UTC"
+
+            schedule_data = {
+                "cron":          cron_expr,
+                "label":         _humanize_cron(cron_expr) if cron_expr else None,
+                "timezone":      tz_name,
+                "is_daily":      _cron_is_daily(cron_expr) if cron_expr else False,
+                "next_run_epoch": _cron_next_run(cron_expr, tz_name) if cron_expr else None,
+            } if cron_expr else None
+
+            last_run = last_run_by_dep.get(dep["id"])
+
+            result.append({
+                "id":          dep["id"],
+                "name":        dep.get("name") or "",
+                "flow_name":   dep.get("flow_name") or "",
+                "description": dep.get("description") or "",
+                "paused":      dep.get("paused", False) or dep.get("status") == "PAUSED",
+                "schedule":    schedule_data,
+                "last_run":    _format_prefect_run(last_run, tz_name) if last_run else None,
+            })
+
+        return jsonify(result)
+    except requests.HTTPError as e:
+        return jsonify({"error": f"Prefect API error {e.response.status_code}"}), 502
+    except requests.RequestException as e:
+        return jsonify({"error": f"Prefect unreachable: {e}"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/prefect/run/<deployment_id>", methods=["POST"])
+@login_required
+def prefect_trigger_run(deployment_id):
+    """Trigger an ad-hoc Prefect deployment run."""
+    try:
+        resp = requests.post(
+            f"{PREFECT_API_URL}/deployments/{deployment_id}/create_flow_run",
+            json={},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return jsonify({"ok": True, "flow_run_id": data.get("id"), "name": data.get("name")})
+    except requests.HTTPError as e:
+        return jsonify({"error": f"Prefect returned {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/prefect/flow-run/<flow_run_id>")
+@login_required
+def prefect_flow_run_status(flow_run_id):
+    """Poll the state of a single Prefect flow run."""
+    try:
+        resp = requests.get(
+            f"{PREFECT_API_URL}/flow_runs/{flow_run_id}",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        run = resp.json()
+        return jsonify({"id": run.get("id"), "state": run.get("state")})
+    except requests.HTTPError as e:
+        return jsonify({"error": f"Prefect error {e.response.status_code}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
@@ -881,23 +1030,6 @@ def _query_tables_directly(conn, since: int, until: int) -> list:
     points.sort(key=lambda p: p["timestamp"])
     return _dedup_location(points)
 
-
-# ── Cron runs ─────────────────────────────────────────────────────────────────
-
-CRON_RUNS_PATH = os.environ.get("CRON_RUNS_PATH", "/data/cron_runs.json")
-
-@app.route("/api/cron-runs")
-@login_required
-def cron_runs_api():
-    import json
-    try:
-        with open(CRON_RUNS_PATH) as f:
-            data = json.load(f)
-        return jsonify(data)
-    except FileNotFoundError:
-        return jsonify({})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 # ── Config ────────────────────────────────────────────────────────────────────

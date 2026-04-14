@@ -434,7 +434,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   .backup-count { text-align: left; }
 }
 
-/* ── Cron Jobs page ──────────────────────────────────── */
+/* ── Schedule page ───────────────────────────────────── */
 .cron-status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -449,6 +449,8 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 }
 .cron-card.success { border-left: 3px solid var(--green); }
 .cron-card.failure { border-left: 3px solid var(--red); }
+.cron-card.running { border-left: 3px solid var(--yellow); }
+.cron-card.paused  { border-left: 3px solid var(--border2); opacity: 0.7; }
 .cron-card.unknown { border-left: 3px solid var(--border2); }
 .cron-name   { font-family: var(--mono); font-size: 12px; color: var(--text-hi); margin-bottom: 6px; }
 .cron-time   { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }

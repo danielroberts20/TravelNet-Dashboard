@@ -3,3 +3,4 @@ requests==2.32.3
 psutil==6.1.1
 gunicorn==23.0.0
 gevent==24.11.1
+croniter==6.0.0

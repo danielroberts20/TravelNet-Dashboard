@@ -7,7 +7,7 @@ import { apiFetch } from '../api'
 const NAV_LINKS = [
   { to: '/',        icon: '◈', label: 'Overview',  end: true },
   { to: '/db',      icon: '⊞', label: 'Database' },
-  { to: '/crons',   icon: '◷', label: 'Cron Jobs' },
+  { to: '/crons',   icon: '◷', label: 'Schedule' },
   { to: '/logs',    icon: '≡', label: 'Logs' },
   { to: '/backups', icon: '⊙', label: 'Backups' },
   { to: '/location',icon: '◎', label: 'Location' },
