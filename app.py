@@ -45,6 +45,7 @@ TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://pi-server.tail186ff8.ts.net:4200/api")
 
+
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
     "transactions",
@@ -608,6 +609,7 @@ def _format_prefect_run(run: dict, tz_name: str) -> dict:
     total_secs = run.get("total_run_time")
     start_iso  = run.get("start_time")
     return {
+        "flow_run_id":    run.get("id"),
         "state_type":     state.get("type"),
         "state_name":     state.get("name"),
         "start_time":     fmt_dt(start_iso),
@@ -664,7 +666,12 @@ def prefect_deployments():
             json={
                 "limit": 200,
                 "sort": "START_TIME_DESC",
-                "flow_runs": {"deployment_id": {"any_": dep_ids}},
+                "flow_runs": {
+                    "deployment_id": {"any_": dep_ids},
+                    # Exclude pre-created cron runs (null start_time) so they
+                    # don't shadow PENDING/RUNNING/COMPLETED runs as last_run.
+                    "state": {"type": {"not_any_": ["SCHEDULED"]}},
+                },
             },
             timeout=10,
         )
@@ -702,6 +709,7 @@ def prefect_deployments():
                 "flow_name":   dep.get("flow_name") or "",
                 "description": dep.get("description") or "",
                 "paused":      dep.get("paused", False) or dep.get("status") == "PAUSED",
+                "notifies":    "notifies" in dep.get("tags", []),
                 "schedule":    schedule_data,
                 "last_run":    _format_prefect_run(last_run, tz_name) if last_run else None,
             })

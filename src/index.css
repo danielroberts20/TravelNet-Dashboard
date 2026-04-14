@@ -446,6 +446,8 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
 }
 .cron-card.success { border-left: 3px solid var(--green); }
 .cron-card.failure { border-left: 3px solid var(--red); }
