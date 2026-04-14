@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { apiJson } from '../api'
 import { timeSince } from '../utils'
@@ -18,6 +18,16 @@ function formatTs(ts) {
 function toEpoch(ts) {
   if (typeof ts === 'number') return ts
   return new Date(ts).getTime() / 1000
+}
+
+function FitBounds({ coords }) {
+  const map = useMap()
+  useEffect(() => {
+    if (coords.length > 0) {
+      map.fitBounds(coords, { padding: [20, 20], maxZoom: 14 })
+    }
+  }, [coords])
+  return null
 }
 
 export default function Location() {
@@ -63,12 +73,7 @@ export default function Location() {
     ? allPoints.reduce((a, b) => toEpoch(a.ts) > toEpoch(b.ts) ? a : b)
     : null
 
-  // Compute bounds for auto-fit
   const allCoords = allPoints.map(p => [p.lat, p.lon])
-  const center    = allCoords.length > 0
-    ? [allCoords.reduce((s, c) => s + c[0], 0) / allCoords.length,
-       allCoords.reduce((s, c) => s + c[1], 0) / allCoords.length]
-    : [51.5, -0.1]
 
   return (
     <>
@@ -125,10 +130,11 @@ export default function Location() {
           </div>
         )}
         <MapContainer
-          center={center} zoom={10}
+          center={[51.5, -0.1]} zoom={3}
           style={{ height:'520px', borderRadius:'6px', border:'1px solid var(--border)', background:'var(--bg)' }}
           ref={mapRef}
         >
+          <FitBounds coords={allCoords} />
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="© OpenStreetMap contributors"
