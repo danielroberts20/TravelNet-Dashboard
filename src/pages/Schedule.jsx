@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { apiJson, apiFetch } from '../api'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
@@ -6,95 +6,303 @@ import { timeSince } from '../utils'
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }
 
-// States from which a flow will not progress further
-const TERMINAL_STATES = new Set(['COMPLETED', 'FAILED', 'CRASHED', 'CANCELLED'])
+// Terminal Prefect states — no further transitions expected
+const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CRASHED', 'CANCELLED'])
 
-// How long to show the "recently finished" highlight after a run completes
-const RECENT_MS = 15 * 60 * 1000  // 15 minutes
-const RECENT_RUNS_KEY = 'schedule_recent_runs'
+// How long ad-hoc result colours (green / red) persist after a run completes
+const AD_HOC_EXPIRY_MS = 30 * 60 * 1000        // 30 minutes
 
-function saveRecentRun(depId, state) {
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(RECENT_RUNS_KEY) || '{}')
-    stored[depId] = { state, at: Date.now() }
-    sessionStorage.setItem(RECENT_RUNS_KEY, JSON.stringify(stored))
-  } catch (_) {}
+// How long automatic result colours (blue / orange) persist since last auto run
+const AUTO_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+// ── Colour helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns a CSS class suffix that drives the card's left-border colour.
+ *
+ * Priority (high → low):
+ *   yellow  – ad-hoc run in progress
+ *   green   – ad-hoc run completed within AD_HOC_EXPIRY_MS
+ *   red     – ad-hoc run failed   within AD_HOC_EXPIRY_MS
+ *   blue    – last auto run completed within AUTO_EXPIRY_MS
+ *   orange  – last auto run failed    within AUTO_EXPIRY_MS
+ *   grey    – none of the above (neutral / "Scheduled" default)
+ */
+function cardClass(dep, activeRuns) {
+  const active = activeRuns[dep.id]
+
+  if (active && !active.terminal) return 'running'       // yellow
+
+  if (active && active.terminal) {
+    const age = Date.now() - active.completedAt
+    if (age < AD_HOC_EXPIRY_MS) {
+      const s = (active.state || '').toUpperCase()
+      if (s === 'COMPLETED')                     return 'success'  // green
+      if (s === 'FAILED' || s === 'CRASHED')     return 'failure'  // red
+    }
+    // Expired — fall through
+  }
+
+  // Survives refresh: check last_manual_run age for ad-hoc green/red
+  const manualRun = dep.last_manual_run
+  if (manualRun?.start_time_iso) {
+    const age = Date.now() - new Date(manualRun.start_time_iso).getTime()
+    if (age < AD_HOC_EXPIRY_MS) {
+      const s = (manualRun.state_type || '').toUpperCase()
+      if (s === 'COMPLETED')                 return 'success'  // green
+      if (s === 'FAILED' || s === 'CRASHED') return 'failure'  // red
+    }
+  }
+
+  const autoRun = dep.last_auto_run
+  if (autoRun?.start_time_iso) {
+    const age = Date.now() - new Date(autoRun.start_time_iso).getTime()
+    if (age < AUTO_EXPIRY_MS) {
+      const s = (autoRun.state_type || '').toUpperCase()
+      if (s === 'COMPLETED')                 return 'auto-success'  // blue
+      if (s === 'FAILED' || s === 'CRASHED') return 'auto-failure'  // orange
+    }
+  }
+
+  if (dep.paused) return 'paused'
+  return 'unknown'  // grey
 }
 
-function loadRecentRuns() {
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(RECENT_RUNS_KEY) || '{}')
-    const now = Date.now()
-    const fresh = {}
-    for (const [depId, entry] of Object.entries(stored)) {
-      if (now - entry.at < RECENT_MS) fresh[depId] = entry
+/** Badge variant + label for a given card class. */
+function cardBadge(cls, dep, activeRuns) {
+  switch (cls) {
+    case 'running': {
+      const s = activeRuns[dep.id]?.state || 'Scheduled'
+      return { variant: 'yellow', text: s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() }
     }
-    sessionStorage.setItem(RECENT_RUNS_KEY, JSON.stringify(fresh))
-    return fresh
-  } catch (_) {
-    return {}
+    case 'success':      return { variant: 'green',  text: 'Completed' }
+    case 'failure':      return { variant: 'red',    text: 'Failed'    }
+    case 'auto-success': return { variant: 'blue',   text: 'Completed' }
+    case 'auto-failure': return { variant: 'orange', text: 'Failed'    }
+    case 'paused':       return { variant: 'yellow', text: 'Paused'    }
+    default:             return { variant: 'dim',    text: dep.schedule?.cron ? 'Scheduled' : 'Manual' }
   }
 }
+
+/** Timing row shown below the badge. Returns null for the grey default. */
+function CardMeta({ dep, activeRuns, cls }) {
+  const active = activeRuns[dep.id]
+
+  if (cls === 'running') {
+    return <div className="cron-time">In progress…</div>
+  }
+
+  if (cls === 'success' || cls === 'failure') {
+    if (active?.terminal) {
+      return <div className="cron-time">{timeSince(active.completedAt / 1000)}</div>
+    }
+    // Survived a page refresh — show from last_manual_run
+    const r = dep.last_manual_run
+    if (r?.start_time_iso) {
+      return (
+        <>
+          <div className="cron-time">{r.start_time} · {timeSince(r.start_time_iso)}</div>
+          {r.duration_human && <div className="cron-time">{r.duration_human}</div>}
+        </>
+      )
+    }
+    return null
+  }
+
+  if (cls === 'auto-success' || cls === 'auto-failure') {
+    const r = dep.last_auto_run
+    return (
+      <>
+        <div className="cron-time">
+          {r.start_time} · {timeSince(r.start_time_iso)}
+        </div>
+        {r.duration_human && <div className="cron-time">{r.duration_human}</div>}
+      </>
+    )
+  }
+
+  return null
+}
+
+// ── Schedule table helpers ─────────────────────────────────────────────────────
 
 function timeUntil(epoch) {
   if (!epoch) return null
   const mins = Math.round((epoch * 1000 - Date.now()) / 60000)
-  if (mins < 0)    return 'overdue'
-  if (mins < 60)   return `in ${mins}m`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h < 24)      return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`
+  if (mins < 0)  return 'overdue'
+  if (mins < 60) return `in ${mins}m`
+  const h = Math.floor(mins / 60), m = mins % 60
+  if (h < 24)    return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`
   return `in ${Math.floor(h / 24)}d`
 }
 
-function stateVariant(stateType) {
-  switch ((stateType || '').toUpperCase()) {
-    case 'COMPLETED':  return 'green'
-    case 'FAILED':
-    case 'CRASHED':    return 'red'
-    case 'RUNNING':
-    case 'SCHEDULED':
-    case 'PENDING':    return 'yellow'
-    default:           return 'dim'
-  }
+function ScheduleSection({ label, rows, showNext, style }) {
+  return (
+    <div style={style}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '8px' }}>
+        {label}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Flow</th>
+              {showNext && <th>Schedule</th>}
+              {showNext && <th>Next run</th>}
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(dep => (
+              <tr key={dep.id}>
+                <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{dep.name}</td>
+                {showNext && (
+                  <td style={{ whiteSpace: 'nowrap' }}>{dep.schedule?.label || dep.schedule?.cron || '—'}</td>
+                )}
+                {showNext && (
+                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>
+                    {timeUntil(dep.schedule?.next_run_epoch) || '—'}
+                  </td>
+                )}
+                <td>{dep.description || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
 }
 
-function cardClass(dep, activeRuns) {
-  const active = activeRuns[dep.id]
-  if (active) {
-    const s = (active.state || '').toUpperCase()
-    if (s === 'COMPLETED')                     return 'success'
-    if (s === 'FAILED' || s === 'CRASHED')     return 'failure'
-    if (s === 'ERROR')                         return 'failure'
-    if (s === 'CANCELLED')                     return 'unknown'
-    return 'running'  // SCHEDULED, PENDING, RUNNING
+// ── Result modal ───────────────────────────────────────────────────────────────
+
+function RunModal({ dep, flowRunId, onClose }) {
+  const [data,    setData]    = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState(null)
+
+  useEffect(() => {
+    apiJson(`/api/prefect/flow-run/${flowRunId}`)
+      .then(d => {
+        if (d?.error) throw new Error(d.error)
+        setData(d)
+      })
+      .catch(e => setError(e.message || 'Failed to load run data'))
+      .finally(() => setLoading(false))
+  }, [flowRunId])
+
+  // Close on Escape
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const state      = data?.state || {}
+  const stateType  = (state.type || '').toUpperCase()
+  const isAuto     = data?.auto_scheduled
+  const uiUrl      = data?.prefect_ui_url
+  const result     = data?.result
+
+  function stateBadgeVariant() {
+    if (stateType === 'COMPLETED') return isAuto ? 'blue' : 'green'
+    if (stateType === 'FAILED' || stateType === 'CRASHED') return isAuto ? 'orange' : 'red'
+    if (stateType === 'RUNNING') return 'yellow'
+    return 'dim'
   }
-  if (dep.paused) return 'paused'
-  if (!dep.last_run) return 'unknown'
-  switch ((dep.last_run.state_type || '').toUpperCase()) {
-    case 'COMPLETED': return 'unknown'
-    case 'FAILED':
-    case 'CRASHED':   return 'failure'
-    case 'RUNNING':   return 'running'
-    default:          return 'unknown'
+
+  function fmtSecs(s) {
+    if (!s) return null
+    const total = Math.round(s)
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60
+    if (h) return `${h}h ${m}m ${sec}s`
+    if (m) return `${m}m ${sec}s`
+    return `${sec}s`
   }
+
+  let resultContent
+  if (loading) {
+    resultContent = (
+      <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
+        Loading…
+      </div>
+    )
+  } else if (error) {
+    resultContent = (
+      <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--red)' }}>
+        {error}
+      </div>
+    )
+  } else if (result !== null && result !== undefined) {
+    // Normalise: result may arrive as a parsed object or as a compact JSON string
+    let formatted
+    if (typeof result === 'string') {
+      try { formatted = JSON.stringify(JSON.parse(result), null, 2) }
+      catch { formatted = result }
+    } else {
+      formatted = JSON.stringify(result, null, 2)
+    }
+    resultContent = (
+      <pre className="modal-result-pre">{formatted}</pre>
+    )
+  } else {
+    resultContent = (
+      <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+        Result not available inline.
+        {uiUrl && (
+          <>
+            {' '}
+            <a href={uiUrl} target="_blank" rel="noreferrer"
+               style={{ color: 'var(--accent)' }}>
+              View in Prefect UI →
+            </a>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">{dep.name}</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        {!loading && !error && data && (
+          <div className="modal-meta">
+            <Badge variant={stateBadgeVariant()}>
+              {state.name || stateType || '—'}
+            </Badge>
+            {isAuto !== undefined && (
+              <span style={{ color: 'var(--text-dim)' }}>
+                {isAuto ? 'Scheduled run' : 'Manual run'}
+              </span>
+            )}
+            {data.start_time && (
+              <span>{new Date(data.start_time).toLocaleString()}</span>
+            )}
+            {fmtSecs(data.total_run_time) && (
+              <span>Duration: {fmtSecs(data.total_run_time)}</span>
+            )}
+          </div>
+        )}
+
+        <div className="modal-body">
+          {!loading && !error && (
+            <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '8px' }}>
+              Return value
+            </div>
+          )}
+          {resultContent}
+        </div>
+      </div>
+    </div>
+  )
 }
 
-function runButton(dep, triggering, confirming, activeRuns) {
-  if (triggering[dep.id])  return { text: 'Queuing…', disabled: true, variant: 'ghost' }
-  // Confirm check must come before active check so "Confirm?" replaces the terminal label
-  if (confirming[dep.id])  return { text: 'Confirm?',  disabled: false, variant: 'danger' }
-  const active = activeRuns[dep.id]
-  if (active) {
-    const s = (active.state || '').toUpperCase()
-    if (s === 'COMPLETED')                 return { text: '✓ Done',     disabled: false, variant: 'ghost', isTerminal: true }
-    if (s === 'FAILED' || s === 'CRASHED') return { text: '✗ Failed',   disabled: false, variant: 'ghost', isTerminal: true }
-    if (s === 'CANCELLED')                 return { text: 'Cancelled',  disabled: false, variant: 'ghost', isTerminal: true }
-    if (s === 'ERROR')                     return { text: '✗ Error',    disabled: false, variant: 'ghost', isTerminal: true }
-    return { text: '⏳ Running…', disabled: true, variant: 'ghost' }
-  }
-  return { text: '▶ Run', disabled: dep.paused, variant: 'ghost' }
-}
+// ── Log digest helpers ─────────────────────────────────────────────────────────
 
 function levelVariant(lvl) {
   if (!lvl) return 'dim'
@@ -104,6 +312,8 @@ function levelVariant(lvl) {
   return 'dim'
 }
 
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export default function Schedule() {
   const [deployments, setDeployments] = useState(null)
   const [auxData,     setAuxData]     = useState(null)
@@ -111,82 +321,51 @@ export default function Schedule() {
   const [error,       setError]       = useState(null)
   // { [depId]: true } — while the trigger POST is in-flight
   const [triggering,  setTriggering]  = useState({})
-  // { [depId]: true } — waiting for second press to confirm a re-run
-  const [confirming,  setConfirming]  = useState({})
-  // { [depId]: { flowRunId, state } } — runs we're watching
+  // { [depId]: { flowRunId, state, terminal, completedAt } }
   const [activeRuns,  setActiveRuns]  = useState({})
-  // Stable ref so the interval callback can always see the latest activeRuns
-  const activeRunsRef = useRef(activeRuns)
-  useEffect(() => { activeRunsRef.current = activeRuns }, [activeRuns])
+  // { dep, flowRunId } | null
+  const [modal,       setModal]       = useState(null)
 
-  function loadDeployments({ restoreActive = false } = {}) {
+  function loadDeployments() {
     return apiJson('/api/prefect/deployments').then(deps => {
-      if (!Array.isArray(deps)) {
-        if (deps?.error) setError(`Prefect: ${deps.error}`)
-        return
-      }
-      setDeployments(deps)
-      if (restoreActive) {
-        const restored = {}
-        // Re-derive genuinely in-flight runs from Prefect state
-        for (const dep of deps) {
-          const lr = dep.last_run
-          if (!lr?.flow_run_id) continue
-          const s = (lr.state_type || '').toUpperCase()
-          // Only restore genuinely in-flight runs. SCHEDULED means Prefect has
-          // queued a future cron run — not something actively executing.
-          if (s === 'RUNNING' || s === 'PENDING') {
-            restored[dep.id] = { flowRunId: lr.flow_run_id, state: s }
-          }
-        }
-        // Restore recently completed/failed runs from sessionStorage
-        const recent = loadRecentRuns()
-        const now = Date.now()
-        for (const [depId, entry] of Object.entries(recent)) {
-          if (restored[depId]) continue  // don't overwrite an in-flight run
-          restored[depId] = { flowRunId: null, state: entry.state }
-          // Auto-clear after the remaining window so the highlight fades naturally
-          setTimeout(() => {
-            setActiveRuns(s => { const n = { ...s }; delete n[depId]; return n })
-          }, RECENT_MS - (now - entry.at))
-        }
-        if (Object.keys(restored).length > 0) setActiveRuns(restored)
-      }
+      if (Array.isArray(deps)) setDeployments(deps)
+      else if (deps?.error)    setError(`Prefect: ${deps.error}`)
     })
   }
 
   useEffect(() => {
-    Promise.all([loadDeployments({ restoreActive: true }), apiJson('/api/crons')])
+    Promise.all([loadDeployments(), apiJson('/api/crons')])
       .then(([, aux]) => setAuxData(aux))
       .catch(() => setError('Failed to load schedule data'))
       .finally(() => setLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll active runs every 5 s
+  // Poll in-progress ad-hoc runs every 5 s
   useEffect(() => {
-    const pending = Object.entries(activeRuns).filter(
-      ([, r]) => !TERMINAL_STATES.has((r.state || '').toUpperCase()) && r.state !== 'ERROR'
-    )
+    const pending = Object.entries(activeRuns).filter(([, r]) => !r.terminal)
     if (pending.length === 0) return
 
     const timer = setInterval(async () => {
       for (const [depId, run] of pending) {
         if (!run.flowRunId) continue
         try {
-          const data = await apiJson(`/api/prefect/flow-run/${run.flowRunId}`)
+          const data     = await apiJson(`/api/prefect/flow-run/${run.flowRunId}`)
           const newState = data.state?.type
           if (!newState) continue
 
-          setActiveRuns(s => ({ ...s, [depId]: { ...s[depId], state: newState } }))
-
-          if (TERMINAL_STATES.has(newState.toUpperCase())) {
-            saveRecentRun(depId, newState)
-            // Refresh the full deployment list so the card shows the new last_run
+          if (TERMINAL.has(newState.toUpperCase())) {
+            const completedAt = Date.now()
+            setActiveRuns(s => ({
+              ...s,
+              [depId]: { ...s[depId], state: newState, terminal: true, completedAt },
+            }))
             loadDeployments()
-            // Clear this entry a few seconds later so the user sees the final colour
+            // Clear this entry after X minutes so the card reverts to auto colour
             setTimeout(() => {
               setActiveRuns(s => { const n = { ...s }; delete n[depId]; return n })
-            }, 5000)
+            }, AD_HOC_EXPIRY_MS)
+          } else {
+            setActiveRuns(s => ({ ...s, [depId]: { ...s[depId], state: newState } }))
           }
         } catch (_) { /* ignore transient poll errors */ }
       }
@@ -195,40 +374,39 @@ export default function Schedule() {
     return () => clearInterval(timer)
   }, [activeRuns]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function triggerRun(dep, btn) {
-    // If the run is in a terminal state, require a confirm press first
-    if (btn.isTerminal && !confirming[dep.id]) {
-      setConfirming(s => ({ ...s, [dep.id]: true }))
-      // Auto-dismiss after 4 s if no second press
-      setTimeout(() => {
-        setConfirming(s => { const n = { ...s }; delete n[dep.id]; return n })
-      }, 4000)
-      return
-    }
-    setConfirming(s => { const n = { ...s }; delete n[dep.id]; return n })
-    // Clear the previous terminal activeRun so the card resets
-    setActiveRuns(s => { const n = { ...s }; delete n[dep.id]; return n })
+  async function triggerRun(dep) {
     setTriggering(s => ({ ...s, [dep.id]: true }))
     try {
       const resp = await apiFetch(`/api/prefect/run/${dep.id}`, { method: 'POST' })
       const data = await resp.json()
       if (!resp.ok) throw new Error(data.error || 'Unknown error')
-      setActiveRuns(s => ({ ...s, [dep.id]: { flowRunId: data.flow_run_id, state: 'SCHEDULED' } }))
+      setActiveRuns(s => ({ ...s, [dep.id]: { flowRunId: data.flow_run_id, state: 'SCHEDULED', terminal: false } }))
     } catch (_) {
-      setActiveRuns(s => ({ ...s, [dep.id]: { flowRunId: null, state: 'ERROR' } }))
-      setTimeout(() => {
-        setActiveRuns(s => { const n = { ...s }; delete n[dep.id]; return n })
-      }, 5000)
+      // No activeRun on error — show nothing (the trigger itself failed)
     } finally {
       setTriggering(s => { const n = { ...s }; delete n[dep.id]; return n })
     }
   }
 
-  const apiUsage = auxData?.api_usage || {}
-  const jobs     = auxData?.jobs      || []
-  const deps     = deployments        || []
+  function openModal(dep) {
+    const active = activeRuns[dep.id]
+    if (active?.flowRunId) {
+      setModal({ dep, flowRunId: active.flowRunId })
+      return
+    }
+    // Pick whichever of auto / manual run is more recent
+    const autoTime   = dep.last_auto_run?.start_time_iso   ? new Date(dep.last_auto_run.start_time_iso).getTime()   : 0
+    const manualTime = dep.last_manual_run?.start_time_iso ? new Date(dep.last_manual_run.start_time_iso).getTime() : 0
+    const flowRunId  = manualTime >= autoTime
+      ? (dep.last_manual_run?.flow_run_id || dep.last_auto_run?.flow_run_id)
+      : (dep.last_auto_run?.flow_run_id   || dep.last_manual_run?.flow_run_id)
+    if (!flowRunId) return
+    setModal({ dep, flowRunId })
+  }
 
-  // Schedule table: split into daily / scheduled / manual, each sorted by next_run_epoch
+  const apiUsage    = auxData?.api_usage || {}
+  const jobs        = auxData?.jobs      || []
+  const deps        = deployments        || []
   const byNextRun   = (a, b) => (a.schedule?.next_run_epoch ?? Infinity) - (b.schedule?.next_run_epoch ?? Infinity)
   const dailyDeps   = deps.filter(d =>  d.schedule?.is_daily).sort(byNextRun)
   const scheduledDeps = deps.filter(d => d.schedule?.cron && !d.schedule.is_daily).sort(byNextRun)
@@ -238,7 +416,7 @@ export default function Schedule() {
     <>
       <div className="page-header">
         <h1>Schedule</h1>
-        <p>Prefect flow status and deployment schedule. Completed/failed state persists for 15 minutes after a run.</p>
+        <p>Prefect flow status and deployment schedule.</p>
       </div>
 
       {error && (
@@ -253,56 +431,36 @@ export default function Schedule() {
         {loading
           ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
           : deps.map(dep => {
-              const btn = runButton(dep, triggering, confirming, activeRuns)
+              const cls  = cardClass(dep, activeRuns)
+              const bdg  = cardBadge(cls, dep, activeRuns)
+              const isRunning = triggering[dep.id] || (activeRuns[dep.id] && !activeRuns[dep.id].terminal)
+
               return (
-                <div key={dep.id} className={`cron-card ${cardClass(dep, activeRuns)}`}>
-                  <div className="cron-name">
-                    {dep.name}
-                    {dep.notifies && <span title="Sends a notification on completion/failure" style={{ marginLeft: '6px', opacity: 0.6 }}>🔔</span>}
-                  </div>
+                <div
+                  key={dep.id}
+                  className={`cron-card ${cls}`}
+                  onClick={() => openModal(dep)}
+                  title="Click to view last run details"
+                >
+                  <div className="cron-name">{dep.name}</div>
                   {dep.description && (
                     <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '6px', lineHeight: 1.4 }}>
                       {dep.description}
                     </div>
                   )}
                   <div style={{ marginBottom: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {(() => {
-                      const active = activeRuns[dep.id]
-                      if (active) {
-                        const s = active.state || 'SCHEDULED'
-                        return <Badge variant={stateVariant(s)}>{s.charAt(0) + s.slice(1).toLowerCase()}</Badge>
-                      }
-                      if (!dep.last_run) return <Badge variant="dim">Never run</Badge>
-                      // Cron jobs that last completed normally are idle/waiting — show "Scheduled"
-                      // rather than a persistent green "Completed" badge
-                      if (dep.schedule?.cron && (dep.last_run.state_type || '').toUpperCase() === 'COMPLETED')
-                        return <Badge variant="dim">Scheduled</Badge>
-                      return (
-                        <Badge variant={stateVariant(dep.last_run.state_type)}>
-                          {dep.last_run.state_name || dep.last_run.state_type || '—'}
-                        </Badge>
-                      )
-                    })()}
-                    {dep.paused && <Badge variant="yellow">paused</Badge>}
+                    <Badge variant={bdg.variant}>{bdg.text}</Badge>
+                    {dep.paused && cls !== 'paused' && <Badge variant="yellow">paused</Badge>}
                   </div>
-                  {dep.last_run && (
-                    <>
-                      <div className="cron-time">
-                        {dep.last_run.start_time} · {timeSince(dep.last_run.start_time_iso)}
-                      </div>
-                      {dep.last_run.duration_human && (
-                        <div className="cron-time">{dep.last_run.duration_human}</div>
-                      )}
-                    </>
-                  )}
+                  <CardMeta dep={dep} activeRuns={activeRuns} cls={cls} />
                   <div style={{ marginTop: 'auto', paddingTop: '10px' }}>
                     <button
-                      className={`btn btn-${btn.variant}`}
+                      className="btn btn-ghost"
                       style={{ fontSize: '11px', padding: '3px 10px', width: '100%', justifyContent: 'center' }}
-                      disabled={btn.disabled}
-                      onClick={() => triggerRun(dep, btn)}
+                      disabled={isRunning || dep.paused}
+                      onClick={e => { e.stopPropagation(); triggerRun(dep) }}
                     >
-                      {btn.text}
+                      {triggering[dep.id] ? 'Queuing…' : isRunning ? '⏳ Running…' : '▶ Run'}
                     </button>
                   </div>
                 </div>
@@ -416,44 +574,15 @@ export default function Schedule() {
             </div>
         }
       </Card>
-    </>
-  )
-}
 
-function ScheduleSection({ label, rows, showNext, style }) {
-  return (
-    <div style={style}>
-      <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '8px' }}>
-        {label}
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Flow</th>
-              {showNext && <th>Schedule</th>}
-              {showNext && <th>Next run</th>}
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(dep => (
-              <tr key={dep.id}>
-                <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{dep.name}</td>
-                {showNext && (
-                  <td style={{ whiteSpace: 'nowrap' }}>{dep.schedule?.label || dep.schedule?.cron || '—'}</td>
-                )}
-                {showNext && (
-                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>
-                    {timeUntil(dep.schedule?.next_run_epoch) || '—'}
-                  </td>
-                )}
-                <td>{dep.description || '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      {/* Result modal */}
+      {modal && (
+        <RunModal
+          dep={modal.dep}
+          flowRunId={modal.flowRunId}
+          onClose={() => setModal(null)}
+        />
+      )}
+    </>
   )
 }

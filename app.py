@@ -44,6 +44,7 @@ TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
 TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://pi-server.tail186ff8.ts.net:4200/api")
+FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 
 
 # Tables that can be reset from the dashboard (safelist)
@@ -589,6 +590,8 @@ def _fmt_duration(secs: float) -> str:
     return f"{sec}s"
 
 
+
+
 def _format_prefect_run(run: dict, tz_name: str) -> dict:
     """Format a Prefect flow run for the dashboard. Times in the flow's scheduled timezone."""
     try:
@@ -677,12 +680,20 @@ def prefect_deployments():
         )
         runs_resp.raise_for_status()
 
-        # Keep most recent run per deployment (already sorted desc)
-        last_run_by_dep: dict = {}
+        # Track most recent auto-scheduled run and most recent manual run separately.
+        # auto_scheduled=True  → created by the Prefect scheduler
+        # auto_scheduled=False → triggered manually (e.g. from this dashboard)
+        last_auto_by_dep:   dict = {}
+        last_manual_by_dep: dict = {}
         for run in runs_resp.json():
-            dep_id = run.get("deployment_id")
-            if dep_id and dep_id not in last_run_by_dep:
-                last_run_by_dep[dep_id] = run
+            dep_id   = run.get("deployment_id")
+            is_auto  = run.get("auto_scheduled", False)
+            if not dep_id:
+                continue
+            if is_auto and dep_id not in last_auto_by_dep:
+                last_auto_by_dep[dep_id] = run
+            elif not is_auto and dep_id not in last_manual_by_dep:
+                last_manual_by_dep[dep_id] = run
 
         result = []
         for dep in sorted(deployments, key=lambda d: (d.get("name") or "").lower()):
@@ -694,24 +705,25 @@ def prefect_deployments():
             tz_name      = sched_inner.get("timezone", "UTC") if cron_expr else "UTC"
 
             schedule_data = {
-                "cron":          cron_expr,
-                "label":         _humanize_cron(cron_expr) if cron_expr else None,
-                "timezone":      tz_name,
-                "is_daily":      _cron_is_daily(cron_expr) if cron_expr else False,
+                "cron":           cron_expr,
+                "label":          _humanize_cron(cron_expr) if cron_expr else None,
+                "timezone":       tz_name,
+                "is_daily":       _cron_is_daily(cron_expr) if cron_expr else False,
                 "next_run_epoch": _cron_next_run(cron_expr, tz_name) if cron_expr else None,
             } if cron_expr else None
 
-            last_run = last_run_by_dep.get(dep["id"])
+            auto_run   = last_auto_by_dep.get(dep["id"])
+            manual_run = last_manual_by_dep.get(dep["id"])
 
             result.append({
-                "id":          dep["id"],
-                "name":        dep.get("name") or "",
-                "flow_name":   dep.get("flow_name") or "",
-                "description": dep.get("description") or "",
-                "paused":      dep.get("paused", False) or dep.get("status") == "PAUSED",
-                "notifies":    "notifies" in dep.get("tags", []),
-                "schedule":    schedule_data,
-                "last_run":    _format_prefect_run(last_run, tz_name) if last_run else None,
+                "id":             dep["id"],
+                "name":           dep.get("name") or "",
+                "flow_name":      dep.get("flow_name") or "",
+                "description":    dep.get("description") or "",
+                "paused":         dep.get("paused", False) or dep.get("status") == "PAUSED",
+                "schedule":       schedule_data,
+                "last_auto_run":  _format_prefect_run(auto_run,   tz_name) if auto_run   else None,
+                "last_manual_run":_format_prefect_run(manual_run, tz_name) if manual_run else None,
             })
 
         return jsonify(result)
@@ -742,18 +754,44 @@ def prefect_trigger_run(deployment_id):
         return jsonify({"error": str(e)}), 503
 
 
+def _read_flow_result(flow_run_id: str):
+    """Return the result dict for a flow run from flow_results.json, or None."""
+    try:
+        with open(FLOW_RESULTS_PATH) as f:
+            data = json.load(f)
+        for entry in data.values():
+            if entry.get("flow_run_id") == flow_run_id:
+                return entry.get("result")
+    except (FileNotFoundError, json.JSONDecodeError, Exception):
+        pass
+    return None
+
+
 @app.route("/api/prefect/flow-run/<flow_run_id>")
 @login_required
 def prefect_flow_run_status(flow_run_id):
-    """Poll the state of a single Prefect flow run."""
+    """Fetch a single Prefect flow run — used for polling and the result modal."""
     try:
         resp = requests.get(
             f"{PREFECT_API_URL}/flow_runs/{flow_run_id}",
             timeout=10,
         )
         resp.raise_for_status()
-        run = resp.json()
-        return jsonify({"id": run.get("id"), "state": run.get("state")})
+        run   = resp.json()
+        state = run.get("state") or {}
+        ui_base = PREFECT_API_URL.rsplit("/api", 1)[0]
+
+        return jsonify({
+            "id":             run.get("id"),
+            "name":           run.get("name"),
+            "state":          state,
+            "result":         _read_flow_result(flow_run_id),
+            "start_time":     run.get("start_time"),
+            "end_time":       run.get("end_time"),
+            "total_run_time": run.get("total_run_time"),
+            "auto_scheduled": run.get("auto_scheduled", False),
+            "prefect_ui_url": f"{ui_base}/runs/flow-run/{flow_run_id}",
+        })
     except requests.HTTPError as e:
         return jsonify({"error": f"Prefect error {e.response.status_code}"}), 502
     except Exception as e:
