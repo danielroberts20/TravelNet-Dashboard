@@ -290,25 +290,27 @@ def db_table_api(table):
         if not exists:
             return jsonify({"error": f"Table '{table}' not found"}), 404
 
+        # Use cursor description as the source of truth for column order —
+        # PRAGMA table_info omits virtual/generated columns (e.g. total_wh).
+        # PRAGMA is used only to enrich with type/notnull/pk metadata.
         pragma_rows = conn.execute(f"PRAGMA table_info([{table}])").fetchall()
-        if pragma_rows:
+        pragma_by_name = {r["name"]: r for r in pragma_rows}
+
+        cursor = conn.execute(f"SELECT * FROM [{table}] LIMIT 0")
+        if cursor.description:
             columns = [
                 {
-                    "cid":     r["cid"],
-                    "name":    r["name"],
-                    "type":    r["type"] or "—",
-                    "notnull": bool(r["notnull"]),
-                    "default": r["dflt_value"],
-                    "pk":      bool(r["pk"]),
+                    "cid":     i,
+                    "name":    d[0],
+                    "type":    pragma_by_name[d[0]]["type"] if d[0] in pragma_by_name else "—",
+                    "notnull": bool(pragma_by_name[d[0]]["notnull"]) if d[0] in pragma_by_name else False,
+                    "default": pragma_by_name[d[0]]["dflt_value"] if d[0] in pragma_by_name else None,
+                    "pk":      bool(pragma_by_name[d[0]]["pk"]) if d[0] in pragma_by_name else False,
                 }
-                for r in pragma_rows
+                for i, d in enumerate(cursor.description)
             ]
         else:
-            sample = conn.execute(f"SELECT * FROM [{table}] LIMIT 1").fetchone()
-            columns = [
-                {"cid": i, "name": k, "type": "—", "notnull": False, "default": None, "pk": False}
-                for i, k in enumerate(sample.keys())
-            ] if sample else []
+            columns = []
 
         total     = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
         page      = max(1, int(request.args.get("page", 1)))
@@ -347,7 +349,6 @@ def db_table_api(table):
         "direction":   direction,
         "resettable":  table in RESETTABLE_TABLES,
     })
-
 
 @app.route("/api/db/reset/<table>", methods=["POST"])
 @login_required
