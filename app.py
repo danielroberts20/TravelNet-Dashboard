@@ -457,21 +457,41 @@ def prune_preview_proxy():
             timeout=30,
         )
         result = resp.json()
+
         if resp.ok and "counts" in result:
-            # Enrich with current total row counts so the UI can show rows remaining.
-            # Cascade-only tables have no direct timestamp column so we skip them.
-            totals = {}
-            _cascade_only = {"mood_labels", "mood_associations"}
+            # Fetch cascade_only + pre_delete from FastAPI so we're never
+            # out of sync with the server-side definition.
             try:
-                conn = get_db()
+                tables_resp = requests.get(
+                    f"{FASTAPI_URL}/database/prune/tables",
+                    headers=fastapi_headers(),
+                    timeout=5,
+                )
+                tables_meta = tables_resp.json() if tables_resp.ok else {}
+            except Exception:
+                tables_meta = {}
+
+            no_direct_ts = (
+                set(tables_meta.get("cascade_only", []))
+                | set(tables_meta.get("pre_delete", []))
+            )
+
+            totals = {}
+            conn = get_db()
+            try:
                 for table in result["counts"]:
-                    if table not in _cascade_only:
-                        row = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()
+                    if table not in no_direct_ts:
+                        row = conn.execute(
+                            f"SELECT COUNT(*) FROM [{table}]"
+                        ).fetchone()
                         totals[table] = row[0] if row else 0
-                conn.close()
             except Exception:
                 pass
+            finally:
+                conn.close()
+
             result["totals"] = totals
+
         return (json.dumps(result), resp.status_code, {"Content-Type": "application/json"})
     except Exception as e:
         return jsonify({"error": str(e)}), 503

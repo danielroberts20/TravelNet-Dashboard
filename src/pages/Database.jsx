@@ -27,15 +27,15 @@ function todayMidnightLocal() {
 }
 
 function PruneModal({ open, onClose, onDone }) {
-  const [phase, setPhase]           = useState('configure') // configure | preview | result
-  const [meta, setMeta]             = useState(null)        // { tables, cascade_only, default }
-  const [cutoff, setCutoff]         = useState('')
-  const [configError, setConfigErr] = useState('')
-  const [previewData, setPreview]   = useState(null)        // { counts, totals, cutoffUtc }
-  const [confirmText, setConfirm]   = useState('')
+  const [phase, setPhase]             = useState('configure') // configure | preview | result
+  const [meta, setMeta]               = useState(null)        // { tables, cascade_only, pre_delete, cascade_parents, default }
+  const [cutoff, setCutoff]           = useState('')
+  const [configError, setConfigErr]   = useState('')
+  const [previewData, setPreview]     = useState(null)        // { counts, totals, cutoffUtc }
+  const [confirmText, setConfirm]     = useState('')
   const [previewError, setPreviewErr] = useState('')
-  const [resultData, setResult]     = useState(null)
-  const [loading, setLoading]       = useState(false)
+  const [resultData, setResult]       = useState(null)
+  const [loading, setLoading]         = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -52,8 +52,10 @@ function PruneModal({ open, onClose, onDone }) {
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const cascadeSet  = new Set(meta?.cascade_only ?? [])
-  const defaultSet  = new Set(meta?.default ?? [])
+  // ── Derived sets from meta ─────────────────────────────────────────────────
+  const cascadeSet   = new Set(meta?.cascade_only ?? [])
+  const preDeleteSet = new Set(meta?.pre_delete   ?? [])
+  const defaultSet   = new Set(meta?.default      ?? [])
 
   const [checked, setChecked] = useState({})
 
@@ -66,12 +68,16 @@ function PruneModal({ open, onClose, onDone }) {
   }, [meta]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleTable(name, val) {
+    const isDisabled = cascadeSet.has(name) || preDeleteSet.has(name)
+    if (isDisabled) return
+
     setChecked(prev => {
       const next = { ...prev, [name]: val }
-      // cascade tables follow state_of_mind
-      if (name === 'state_of_mind') {
-        meta.cascade_only.forEach(t => { next[t] = val })
-      }
+      // When a parent table is toggled, its cascade/pre-delete children follow.
+      // Uses cascade_parents from the API so the frontend never hardcodes relationships.
+      Object.entries(meta.cascade_parents ?? {}).forEach(([child, parent]) => {
+        if (parent === name) next[child] = val
+      })
       return next
     })
   }
@@ -79,8 +85,13 @@ function PruneModal({ open, onClose, onDone }) {
   function selectAll(val) {
     if (!meta) return
     const next = {}
-    meta.tables.forEach(t => { next[t] = val })
-    setChecked(next)
+    meta.tables.forEach(t => {
+      // Cascade and pre-delete tables are not directly selectable —
+      // they follow their parents. Skip them here.
+      const isDisabled = cascadeSet.has(t) || preDeleteSet.has(t)
+      if (!isDisabled) next[t] = val
+    })
+    setChecked(prev => ({ ...prev, ...next }))
   }
 
   const selectedTables = meta ? meta.tables.filter(t => checked[t]) : []
@@ -134,7 +145,8 @@ function PruneModal({ open, onClose, onDone }) {
 
   return (
     <Modal open={open} onClose={onClose} title="⚠ Prune Records" width="min(640px, 94vw)">
-      {/* Phase: configure */}
+
+      {/* ── Phase: configure ── */}
       {phase === 'configure' && (
         <div>
           <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '20px' }}>
@@ -156,7 +168,9 @@ function PruneModal({ open, onClose, onDone }) {
           />
           <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '20px' }}>
             {tz} (UTC{offsetStr})
-            {cutoffUtcPreview && <> &nbsp;·&nbsp; Cutoff in UTC: <span style={{ color: 'var(--accent)' }}>{cutoffUtcPreview}</span></>}
+            {cutoffUtcPreview && (
+              <> &nbsp;·&nbsp; Cutoff in UTC: <span style={{ color: 'var(--accent)' }}>{cutoffUtcPreview}</span></>
+            )}
           </div>
 
           <label className="field-label">Tables to prune</label>
@@ -170,24 +184,41 @@ function PruneModal({ open, onClose, onDone }) {
           ) : (
             <div className="prune-table-grid">
               {meta.tables.map(name => {
-                const isCascade = cascadeSet.has(name)
+                const isCascade   = cascadeSet.has(name)
+                const isPreDelete = preDeleteSet.has(name)
+                const isDisabled  = isCascade || isPreDelete
+                const parent      = meta.cascade_parents?.[name]
+
+                const tooltip = isCascade
+                  ? `Deleted automatically via CASCADE when ${parent ?? 'parent'} is pruned`
+                  : isPreDelete
+                  ? `Deleted before ${parent ?? 'parent'} — no direct timestamp column`
+                  : undefined
+
                 return (
                   <label
                     key={name}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '6px',
-                      cursor: isCascade ? 'default' : 'pointer',
-                      opacity: isCascade ? 0.5 : 1,
+                      cursor:  isDisabled ? 'default' : 'pointer',
+                      opacity: isDisabled ? 0.5 : 1,
                     }}
-                    title={isCascade ? 'Cascade from state_of_mind — follows that table' : undefined}
+                    title={tooltip}
                   >
                     <input
                       type="checkbox"
                       checked={!!checked[name]}
-                      onChange={e => !isCascade && toggleTable(name, e.target.checked)}
-                      style={{ accentColor: 'var(--red)', cursor: isCascade ? 'default' : 'pointer', flexShrink: 0 }}
+                      onChange={e => !isDisabled && toggleTable(name, e.target.checked)}
+                      style={{
+                        accentColor: 'var(--red)',
+                        cursor: isDisabled ? 'default' : 'pointer',
+                        flexShrink: 0,
+                      }}
                     />
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span style={{
+                      fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
                       {name}
                     </span>
                   </label>
@@ -209,7 +240,7 @@ function PruneModal({ open, onClose, onDone }) {
         </div>
       )}
 
-      {/* Phase: preview */}
+      {/* ── Phase: preview ── */}
       {phase === 'preview' && previewData && (
         <div>
           <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>
@@ -222,29 +253,47 @@ function PruneModal({ open, onClose, onDone }) {
 
           <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: '20px' }}>
             <table style={{ margin: 0 }}>
-              <thead><tr>
-                <th>Table</th>
-                <th style={{ textAlign: 'right' }}>Total</th>
-                <th style={{ textAlign: 'right' }}>Delete</th>
-                <th style={{ textAlign: 'right' }}>Remain</th>
-              </tr></thead>
+              <thead>
+                <tr>
+                  <th>Table</th>
+                  <th style={{ textAlign: 'right' }}>Total</th>
+                  <th style={{ textAlign: 'right' }}>Delete</th>
+                  <th style={{ textAlign: 'right' }}>Remain</th>
+                </tr>
+              </thead>
               <tbody>
                 {Object.entries(previewData.counts).map(([table, deleteCount]) => {
-                  const isCascade = cascadeSet.has(table)
-                  const total = previewData.totals?.[table] ?? null
-                  const remain = (total !== null && !isCascade) ? total - deleteCount : null
-                  const dimMono = { fontFamily: 'var(--mono)', fontSize: '12px', textAlign: 'right', color: 'var(--text-dim)' }
+                  const isCascade   = cascadeSet.has(table)
+                  const isPreDelete = preDeleteSet.has(table)
+                  // Cascade and pre-delete tables have no direct timestamp so
+                  // Total/Remain are meaningless — the backend doesn't return totals for them.
+                  const noDirectTs  = isCascade || isPreDelete
+                  const total       = previewData.totals?.[table] ?? null
+                  const remain      = (!noDirectTs && total !== null) ? total - deleteCount : null
+                  const dimMono     = { fontFamily: 'var(--mono)', fontSize: '12px', textAlign: 'right', color: 'var(--text-dim)' }
+
                   return (
                     <tr key={table}>
                       <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
-                        {table}{isCascade && <span className="badge badge-dim" style={{ fontSize: '10px', marginLeft: '6px' }}>cascade</span>}
+                        {table}
+                        {isCascade   && <span className="badge badge-dim"    style={{ fontSize: '10px', marginLeft: '6px' }}>cascade</span>}
+                        {isPreDelete && <span className="badge badge-yellow" style={{ fontSize: '10px', marginLeft: '6px' }}>pre-delete</span>}
                       </td>
-                      <td style={dimMono}>{isCascade ? '—' : (total !== null ? total.toLocaleString() : '—')}</td>
-                      <td style={{ ...dimMono, color: isCascade ? 'var(--text-dim)' : (deleteCount > 0 ? 'var(--red)' : 'var(--text-dim)'), fontStyle: isCascade ? 'italic' : undefined }}>
+                      <td style={dimMono}>
+                        {noDirectTs ? '—' : (total !== null ? total.toLocaleString() : '—')}
+                      </td>
+                      <td style={{
+                        ...dimMono,
+                        color:     isCascade ? 'var(--text-dim)' : (deleteCount > 0 ? 'var(--red)' : 'var(--text-dim)'),
+                        fontStyle: isCascade ? 'italic' : undefined,
+                      }}>
                         {isCascade ? 'cascade' : deleteCount.toLocaleString()}
                       </td>
-                      <td style={{ ...dimMono, color: isCascade ? 'var(--text-dim)' : (remain === 0 ? 'var(--yellow)' : 'var(--green)') }}>
-                        {isCascade ? '—' : (remain !== null ? remain.toLocaleString() : '—')}
+                      <td style={{
+                        ...dimMono,
+                        color: noDirectTs ? 'var(--text-dim)' : (remain === 0 ? 'var(--yellow)' : 'var(--green)'),
+                      }}>
+                        {noDirectTs ? '—' : (remain !== null ? remain.toLocaleString() : '—')}
                       </td>
                     </tr>
                   )
@@ -254,18 +303,22 @@ function PruneModal({ open, onClose, onDone }) {
                 {(() => {
                   let grandTotal = 0, grandDelete = 0, grandRemain = 0
                   Object.entries(previewData.counts).forEach(([table, deleteCount]) => {
-                    if (cascadeSet.has(table)) return
+                    // Exclude cascade and pre-delete from the grand total —
+                    // they have no direct timestamp so Total/Remain aren't meaningful.
+                    if (cascadeSet.has(table) || preDeleteSet.has(table)) return
                     const total = previewData.totals?.[table] ?? null
                     if (total !== null) {
-                      grandTotal += total; grandDelete += deleteCount; grandRemain += (total - deleteCount)
+                      grandTotal  += total
+                      grandDelete += deleteCount
+                      grandRemain += (total - deleteCount)
                     }
                   })
                   return (
                     <tr style={{ borderTop: '1px solid var(--border2)' }}>
                       <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Total (direct rows)</td>
                       <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--text-hi)', textAlign: 'right' }}>{grandTotal.toLocaleString()}</td>
-                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--red)', textAlign: 'right' }}>{grandDelete.toLocaleString()}</td>
-                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--green)', textAlign: 'right' }}>{grandRemain.toLocaleString()}</td>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--red)',     textAlign: 'right' }}>{grandDelete.toLocaleString()}</td>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--green)',   textAlign: 'right' }}>{grandRemain.toLocaleString()}</td>
                     </tr>
                   )
                 })()}
@@ -303,30 +356,43 @@ function PruneModal({ open, onClose, onDone }) {
               onClick={runExecute}
               disabled={confirmText !== 'DELETE' || loading}
               style={{ opacity: confirmText !== 'DELETE' ? 0.4 : 1, cursor: confirmText !== 'DELETE' ? 'not-allowed' : 'pointer' }}
-            >{loading ? 'Pruning…' : 'Execute Prune'}</button>
+            >
+              {loading ? 'Pruning…' : 'Execute Prune'}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Phase: result */}
+      {/* ── Phase: result ── */}
       {phase === 'result' && resultData && (
         <div>
           <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>Prune complete. Rows deleted:</p>
 
           <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: '16px' }}>
             <table style={{ margin: 0 }}>
-              <thead><tr>
-                <th>Table</th>
-                <th style={{ textAlign: 'right' }}>Deleted</th>
-              </tr></thead>
+              <thead>
+                <tr>
+                  <th>Table</th>
+                  <th style={{ textAlign: 'right' }}>Deleted</th>
+                </tr>
+              </thead>
               <tbody>
                 {Object.entries(resultData.deleted).map(([table, count]) => {
-                  const isCascade = cascadeSet.has(table)
+                  const isCascade   = cascadeSet.has(table)
+                  const isPreDelete = preDeleteSet.has(table)
                   return (
                     <tr key={table}>
-                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{table}</td>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
+                        {table}
+                        {isCascade   && <span className="badge badge-dim"    style={{ fontSize: '10px', marginLeft: '6px' }}>cascade</span>}
+                        {isPreDelete && <span className="badge badge-yellow" style={{ fontSize: '10px', marginLeft: '6px' }}>pre-delete</span>}
+                      </td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--green)' }}>
-                        {isCascade ? <em style={{ color: 'var(--text-dim)' }}>via cascade</em> : count.toLocaleString()}
+                        {/* cascade returns -1 (unknowable); pre-delete returns real rowcount */}
+                        {isCascade
+                          ? <em style={{ color: 'var(--text-dim)' }}>via cascade</em>
+                          : count.toLocaleString()
+                        }
                       </td>
                     </tr>
                   )
@@ -379,11 +445,7 @@ export default function Database() {
 
       es.onmessage = (event) => {
         let data
-        try {
-          data = JSON.parse(event.data)
-        } catch {
-          return
-        }
+        try { data = JSON.parse(event.data) } catch { return }
         if (data.done) {
           es.close()
           esRef.current = null
@@ -445,13 +507,15 @@ export default function Database() {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr>
-              <th>Table</th>
-              <th>Rows</th>
-              <th>Columns</th>
-              <th>Resettable</th>
-              <th></th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Rows</th>
+                <th>Columns</th>
+                <th>Resettable</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
               {!tables ? (
                 <tr><td colSpan={5} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
@@ -494,7 +558,7 @@ export default function Database() {
         <div style={{ background: 'var(--surface)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', gap: '16px', flexWrap: 'wrap' }}>
             <div>
-              <div style={{ fontSize: '13px', color: 'var(--text-hi)', marginBottom: '3px' }}>Prune old location points</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-hi)', marginBottom: '3px' }}>Prune old records</div>
               <div style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Delete table records older than a configurable threshold.</div>
             </div>
             <button className="btn btn-danger" style={{ flexShrink: 0 }} onClick={() => setPruneOpen(true)}>Prune…</button>
