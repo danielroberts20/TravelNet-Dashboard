@@ -6,3 +6,21 @@ __pycache__/
 *.pyo
 .env
 .env.*
+
+# The biggest offender — Stage 2 is Python-only, never needs node_modules
+node_modules/
+
+# Old build artifacts — Stage 2 gets a fresh copy from --from=frontend anyway
+static/dist/
+
+# Python bytecode
+__pycache__/
+**/*.pyc
+**/*.pyo
+
+# TLS certs — shouldn't be baked into the image; mount these at runtime
+certs/
+
+# Misc
+tree.txt
+*.log
