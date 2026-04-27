@@ -260,6 +260,213 @@ function FlightForm() {
   )
 }
 
+const COUNTRY_MAP = {
+  US: { country: 'United States',  currency: 'USD' },
+  FJ: { country: 'Fiji',           currency: 'FJD' },
+  AU: { country: 'Australia',      currency: 'AUD' },
+  NZ: { country: 'New Zealand',    currency: 'NZD' },
+  TH: { country: 'Thailand',       currency: 'THB' },
+  VN: { country: 'Vietnam',        currency: 'VND' },
+  MY: { country: 'Malaysia',       currency: 'MYR' },
+  SG: { country: 'Singapore',      currency: 'SGD' },
+  ID: { country: 'Indonesia',      currency: 'IDR' },
+  KH: { country: 'Cambodia',       currency: 'KHR' },
+  CA: { country: 'Canada',         currency: 'CAD' },
+  GB: { country: 'United Kingdom', currency: 'GBP' },
+}
+
+function CostOfLivingForm() {
+  const empty = {
+    country_code: 'AU', city: '',
+    col_index: '', rent_index: '', col_plus_rent: '',
+    groceries_index: '', restaurant_index: '',
+    center_lat: '', center_lon: '',
+    source: 'Numbeo 2026', reference_year: '2026',
+    is_estimated: false, notes: '',
+  }
+  const [fields, setFields] = useState(empty)
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  function set(k) { return e => setFields(f => ({ ...f, [k]: e.target.value })) }
+  function focus(e) { e.target.style.borderColor = 'var(--accent)' }
+  function blur(e)  { e.target.style.borderColor = 'var(--border2)' }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setLoading(true)
+    setStatus(null)
+    const info = COUNTRY_MAP[fields.country_code]
+    const body = {
+      country_code: fields.country_code,
+      country: info.country,
+      city: fields.city,
+      local_currency: info.currency,
+      source: fields.source,
+      reference_year: parseInt(fields.reference_year, 10),
+      is_estimated: fields.is_estimated,
+      notes: fields.notes || null,
+    }
+    for (const k of ['col_index', 'rent_index', 'col_plus_rent', 'groceries_index', 'restaurant_index', 'center_lat', 'center_lon']) {
+      if (fields[k] !== '') body[k] = parseFloat(fields[k])
+    }
+    try {
+      const resp = await apiFetch('/upload/cost_of_living', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const d = await resp.json()
+      if (resp.ok) {
+        const r = d.result
+        const loc = r.city ? `${r.city}, ${r.country}` : r.country
+        setStatus({ ok: true, msg: `${r.status === 'updated' ? 'Updated' : 'Inserted'} — ${loc}` })
+        setFields(empty)
+      } else {
+        setStatus({ ok: false, msg: d.error || 'Submit failed' })
+      }
+    } catch (err) {
+      setStatus({ ok: false, msg: err.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const derived = COUNTRY_MAP[fields.country_code]
+  const grid2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }
+  const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }
+
+  return (
+    <Card title="Cost of Living" style={{ marginTop: '24px' }}>
+      <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
+        Log a cost of living entry for a country or city. Indices use Numbeo's NYC&nbsp;=&nbsp;100 baseline.
+        Submitting a duplicate (same country + city) overwrites the existing row.
+      </p>
+      {status && (
+        <div style={{
+          padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
+          fontFamily: 'var(--mono)', marginBottom: '14px',
+          background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
+          border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
+          color: status.ok ? 'var(--green)' : 'var(--red)',
+          wordBreak: 'break-all',
+        }}>{status.msg}</div>
+      )}
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+          <div style={grid2}>
+            <Field label="Country *">
+              <select style={inputStyle} value={fields.country_code}
+                      onChange={e => setFields(f => ({ ...f, country_code: e.target.value }))}
+                      onFocus={focus} onBlur={blur} required>
+                {Object.entries(COUNTRY_MAP).map(([code, { country }]) => (
+                  <option key={code} value={code}>{code} — {country}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="City">
+              <input style={inputStyle} value={fields.city} onChange={set('city')}
+                     placeholder="Bangkok (leave blank for country-level)"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+          </div>
+
+          <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)', marginTop: '-6px' }}>
+            {derived.country} · {derived.currency}
+          </div>
+
+          <div style={grid3}>
+            <Field label="Source">
+              <input style={inputStyle} value={fields.source} onChange={set('source')}
+                     onFocus={focus} onBlur={blur} required />
+            </Field>
+            <Field label="Reference year">
+              <input type="number" style={inputStyle} value={fields.reference_year}
+                     onChange={set('reference_year')} min={2020} max={2100}
+                     onFocus={focus} onBlur={blur} required />
+            </Field>
+            <Field label="Estimated?">
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '9px',
+                cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-hi)',
+              }}>
+                <input type="checkbox" checked={fields.is_estimated}
+                       onChange={e => setFields(f => ({ ...f, is_estimated: e.target.checked }))} />
+                Is estimated
+              </label>
+            </Field>
+          </div>
+
+          <div style={{
+            fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'var(--mono)',
+            borderTop: '1px solid var(--border2)', paddingTop: '10px',
+            letterSpacing: '.06em', textTransform: 'uppercase',
+          }}>
+            Cost Indices — NYC = 100 baseline
+          </div>
+
+          <div style={grid3}>
+            <Field label="CoL Index *">
+              <input type="number" style={inputStyle} value={fields.col_index} onChange={set('col_index')}
+                     step="0.1" min="0" max="200" placeholder="e.g. 65.4"
+                     required={!fields.is_estimated}
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+            <Field label="Rent Index">
+              <input type="number" style={inputStyle} value={fields.rent_index} onChange={set('rent_index')}
+                     step="0.1" min="0" max="200" placeholder="optional"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+            <Field label="CoL + Rent">
+              <input type="number" style={inputStyle} value={fields.col_plus_rent} onChange={set('col_plus_rent')}
+                     step="0.1" min="0" max="200" placeholder="optional"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+          </div>
+
+          <div style={grid2}>
+            <Field label="Groceries Index">
+              <input type="number" style={inputStyle} value={fields.groceries_index} onChange={set('groceries_index')}
+                     step="0.1" min="0" max="200" placeholder="optional"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+            <Field label="Restaurant Index">
+              <input type="number" style={inputStyle} value={fields.restaurant_index} onChange={set('restaurant_index')}
+                     step="0.1" min="0" max="200" placeholder="optional"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+          </div>
+
+          <div style={{ ...grid2, opacity: fields.city.trim() ? 1 : 0.35, transition: 'opacity .2s' }}>
+            <Field label="Centre latitude">
+              <input type="number" style={inputStyle} value={fields.center_lat} onChange={set('center_lat')}
+                     step="0.0001" placeholder="e.g. 51.5074"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+            <Field label="Centre longitude">
+              <input type="number" style={inputStyle} value={fields.center_lon} onChange={set('center_lon')}
+                     step="0.0001" placeholder="e.g. -0.1278"
+                     onFocus={focus} onBlur={blur} />
+            </Field>
+          </div>
+
+          <Field label="Notes">
+            <textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '60px' }}
+                      value={fields.notes} onChange={set('notes')} placeholder="Optional notes"
+                      onFocus={focus} onBlur={blur} />
+          </Field>
+
+          <button type="submit" disabled={loading} className="btn btn-primary"
+                  style={{ alignSelf: 'flex-start', opacity: loading ? 0.5 : 1 }}>
+            {loading ? 'Submitting…' : '↑ Log Cost of Living'}
+          </button>
+        </div>
+      </form>
+    </Card>
+  )
+}
+
 export default function Upload() {
   const [apiStatus, setApiStatus] = useState(null)
 
@@ -305,6 +512,8 @@ export default function Upload() {
       </div>
 
       <FlightForm />
+
+      <CostOfLivingForm />
 
       <Card title="FastAPI Status" style={{ marginTop: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>

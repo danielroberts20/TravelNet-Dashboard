@@ -936,6 +936,31 @@ def upload_flight():
         return jsonify({"error": str(e)}), 503
 
 
+@app.route("/upload/cost_of_living", methods=["POST"])
+@login_required
+def upload_cost_of_living():
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/upload/cost-of-living",
+            json=data,
+            headers=fastapi_headers(),
+            timeout=15,
+        )
+        if resp.ok:
+            return jsonify({"ok": True, "result": resp.json()})
+        if resp.status_code == 422:
+            try:
+                detail = resp.json().get("detail", [])
+                msgs = "; ".join(d.get("msg", "") for d in detail if isinstance(d, dict))
+                return jsonify({"error": msgs or "Validation error"}), 422
+            except Exception:
+                pass
+        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
 # ── API health proxy ──────────────────────────────────────────────────────────
 
 @app.route("/api/fastapi-health")
