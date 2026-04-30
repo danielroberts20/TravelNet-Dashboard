@@ -43,28 +43,34 @@ DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
 TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
 TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
-PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://pi-server.tail186ff8.ts.net:4200/api")
+PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186ff8.ts.net:4200/api")
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 
 
 # Tables that can be reset from the dashboard (safelist)
 RESETTABLE_TABLES = [
-    "transactions",
+    "country_transitions",
+    "cost_of_living",
+    "cron_results",
+    "daily_summary",
+    "flights",
     "fx_rates",
-    "api_usage",
-    "log_digest",
-    "health_data",
-    "health_sources",
-    "workouts",
-    "workout_route",
-    "jobs",
-    "cellular_state",
-    "weather_hourly",
-    "weather_daily",
-    "known_places",
     "gap_annotations",
-    "state_of_mind",
+    "known_places",
+    "location_noise",
+    "log_digest",
+    "ml_anomolies",
+    "ml_location_cluster_members",
+    "ml_location_clusters",
+    "ml_segments",
+    "photo_metadata",
+    "place_visits",
+    "places",
+    "transition_timezone",
     "trigger_log",
+    "watchdog_heartbeat",
+    "weather_daily",
+    "weather_hourly"
 ]
 
 @app.route("/manifest.json")
