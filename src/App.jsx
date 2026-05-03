@@ -11,6 +11,7 @@ import Location         from './pages/Location'
 import Upload           from './pages/Upload'
 import Config           from './pages/Config'
 import Trevor           from './pages/Trevor'
+import ML              from './pages/ML'
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/upload"          element={<Upload />} />
           <Route path="/config"          element={<Config />} />
           <Route path="/trevor"          element={<Trevor />} />
+          <Route path="/ml"              element={<ML />} />
         </Route>
       </Routes>
     </BrowserRouter>

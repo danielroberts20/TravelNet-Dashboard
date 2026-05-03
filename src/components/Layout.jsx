@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { to: '/upload',  icon: '↑', label: 'Upload' },
   { to: '/config',  icon: '⚙', label: 'Config' },
   { to: '/trevor',  icon: '◉', label: 'Trevor' },
+  { to: '/ml',      icon: '◆', label: 'Machine Learning' },
 ]
 
 export function Layout() {
