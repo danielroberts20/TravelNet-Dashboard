@@ -137,39 +137,51 @@ function timeUntil(epoch) {
 }
 
 function ScheduleSection({ label, rows, showNext, style }) {
+  const [open, setOpen] = useState(false)
   return (
     <div style={style}>
-      <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '8px' }}>
-        {label}
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Flow</th>
-              {showNext && <th>Schedule</th>}
-              {showNext && <th>Next run</th>}
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(dep => (
-              <tr key={dep.id}>
-                <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{dep.name}</td>
-                {showNext && (
-                  <td style={{ whiteSpace: 'nowrap' }}>{dep.schedule?.label || dep.schedule?.cron || '—'}</td>
-                )}
-                {showNext && (
-                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>
-                    {timeUntil(dep.schedule?.next_run_epoch) || '—'}
-                  </td>
-                )}
-                <td>{dep.description || '—'}</td>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          background: 'none', border: 'none', padding: '0 0 8px',
+          cursor: 'pointer', fontFamily: 'var(--mono)', fontSize: '11px',
+          color: 'var(--text-dim)',
+        }}
+      >
+        <span style={{ fontSize: '9px', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>▶</span>
+        {label} <span style={{ opacity: 0.6 }}>({rows.length})</span>
+      </button>
+      {open && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Flow</th>
+                {showNext && <th>Schedule</th>}
+                {showNext && <th>Next run</th>}
+                <th>Description</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map(dep => (
+                <tr key={dep.id}>
+                  <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{dep.name}</td>
+                  {showNext && (
+                    <td style={{ whiteSpace: 'nowrap' }}>{dep.schedule?.label || dep.schedule?.cron || '—'}</td>
+                  )}
+                  {showNext && (
+                    <td className="dim" style={{ whiteSpace: 'nowrap' }}>
+                      {timeUntil(dep.schedule?.next_run_epoch) || '—'}
+                    </td>
+                  )}
+                  <td>{dep.description || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -407,10 +419,12 @@ export default function Schedule() {
   const apiUsage    = auxData?.api_usage || {}
   const jobs        = auxData?.jobs      || []
   const deps        = deployments        || []
-  const byNextRun   = (a, b) => (a.schedule?.next_run_epoch ?? Infinity) - (b.schedule?.next_run_epoch ?? Infinity)
-  const dailyDeps   = deps.filter(d =>  d.schedule?.is_daily).sort(byNextRun)
-  const scheduledDeps = deps.filter(d => d.schedule?.cron && !d.schedule.is_daily).sort(byNextRun)
-  const manualDeps  = deps.filter(d => !d.schedule?.cron).sort((a, b) => a.name.localeCompare(b.name))
+  const byNextRun     = (a, b) => (a.schedule?.next_run_epoch ?? Infinity) - (b.schedule?.next_run_epoch ?? Infinity)
+  const isFrequent    = d => d.schedule?.cron && !d.schedule.is_daily && d.schedule?.label?.startsWith('Every')
+  const frequentDeps  = deps.filter(isFrequent).sort(byNextRun)
+  const dailyDeps     = deps.filter(d => d.schedule?.is_daily).sort(byNextRun)
+  const scheduledDeps = deps.filter(d => d.schedule?.cron && !d.schedule.is_daily && !isFrequent(d)).sort(byNextRun)
+  const manualDeps    = deps.filter(d => !d.schedule?.cron).sort((a, b) => a.name.localeCompare(b.name))
 
   return (
     <>
@@ -475,6 +489,14 @@ export default function Schedule() {
         {loading
           ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
           : <>
+              {frequentDeps.length > 0 && (
+                <ScheduleSection
+                  label="Frequent"
+                  rows={frequentDeps}
+                  showNext
+                  style={{ marginBottom: dailyDeps.length > 0 || scheduledDeps.length > 0 || manualDeps.length > 0 ? '20px' : 0 }}
+                />
+              )}
               {dailyDeps.length > 0 && (
                 <ScheduleSection
                   label="Daily"
