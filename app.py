@@ -243,7 +243,7 @@ def db_meta_proxy():
     try:
         conn = get_db()
         rows = conn.execute(
-            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'ml_%' ORDER BY type, name"
         ).fetchall()
         for r in rows:
             tname = r["name"]
@@ -519,6 +519,248 @@ def prune_execute_proxy():
         return jsonify({"error": str(e)}), 503
 
 
+# ── ML section ────────────────────────────────────────────────────────────────
+
+
+@app.route("/api/ml/meta")
+@login_required
+def ml_meta_proxy():
+    tables = {"tables": []}
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name LIKE 'ml_%' ORDER BY type, name"
+        ).fetchall()
+        for r in rows:
+            tname = r["name"]
+            ttype = r["type"]
+            cols = [c[1] for c in conn.execute(f"PRAGMA table_info([{tname}])").fetchall()]
+            tables["tables"].append({
+                "name":       tname,
+                "type":       ttype,
+                "cols":       cols,
+                "resettable": tname in RESETTABLE_TABLES,
+            })
+        conn.close()
+    except Exception as e:
+        flash(f"DB error: {e}", "error")
+    return jsonify(tables)
+
+
+@app.route("/api/ml/tables")
+@login_required
+def ml_tables():
+    """Enhanced ml_ table listing with row count, date range, and last updated."""
+    tables = {"tables": []}
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name LIKE 'ml_%' ORDER BY type, name"
+        ).fetchall()
+        for r in rows:
+            tname = r["name"]
+            ttype = r["type"]
+            col_info = conn.execute(f"PRAGMA table_info([{tname}])").fetchall()
+            cols = [c[1] for c in col_info]
+            row_count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
+
+            # Find first column that looks like a timestamp
+            ts_col = None
+            for ci in col_info:
+                cname = ci[1].lower()
+                ctype = (ci[2] or "").upper()
+                if ctype in ("TEXT", "DATETIME", "") and any(k in cname for k in ("ts", "date", "_at")):
+                    ts_col = ci[1]
+                    break
+
+            date_range = None
+            last_updated = None
+            if ts_col and row_count > 0:
+                dr = conn.execute(
+                    f"SELECT MIN([{ts_col}]), MAX([{ts_col}]) FROM [{tname}]"
+                ).fetchone()
+                if dr and dr[0]:
+                    date_range = {"min": dr[0], "max": dr[1]}
+                    last_updated = dr[1]
+
+            tables["tables"].append({
+                "name":         tname,
+                "type":         ttype,
+                "cols":         cols,
+                "resettable":   tname in RESETTABLE_TABLES,
+                "row_count":    row_count,
+                "date_range":   date_range,
+                "last_updated": last_updated,
+            })
+        conn.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(tables)
+
+
+@app.route("/api/ml/daily-summary-features")
+@login_required
+def ml_daily_summary_features():
+    """Coverage statistics for ML-relevant columns in daily_summary."""
+    ML_COLUMNS = [
+        "movement_entropy", "settling_day", "novelty_score",
+        "atl", "ctl", "tsb", "workout_tss", "sleep_midpoint_hr",
+        "mood_classification", "anomaly_score", "is_anomaly",
+        "travel_phase", "day_embedding_id",
+    ]
+    DOMAIN_MAP = {
+        "movement_entropy":   "location",
+        "settling_day":       "location",
+        "novelty_score":      "location",
+        "atl":                "health",
+        "ctl":                "health",
+        "tsb":                "health",
+        "workout_tss":        "health",
+        "sleep_midpoint_hr":  "health",
+        "mood_classification": "health",
+        "anomaly_score":      "ml",
+        "is_anomaly":         "ml",
+        "travel_phase":       "ml",
+        "day_embedding_id":   "ml",
+    }
+    TEXT_COLUMNS = {"mood_classification", "travel_phase"}
+
+    try:
+        conn = get_db()
+        if not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='daily_summary'"
+        ).fetchone():
+            conn.close()
+            return jsonify({"features": []})
+
+        actual_cols = {c[1] for c in conn.execute("PRAGMA table_info(daily_summary)").fetchall()}
+        total_count = conn.execute("SELECT COUNT(*) FROM daily_summary").fetchone()[0]
+
+        features = []
+        for col in ML_COLUMNS:
+            if col not in actual_cols:
+                continue
+
+            non_null = conn.execute(
+                f"SELECT COUNT(*) FROM daily_summary WHERE [{col}] IS NOT NULL"
+            ).fetchone()[0]
+            coverage = round(non_null / total_count * 100, 1) if total_count > 0 else 0.0
+
+            entry = {
+                "column":         col,
+                "domain":         DOMAIN_MAP.get(col, "ml"),
+                "non_null_count": non_null,
+                "total_count":    total_count,
+                "coverage_pct":   coverage,
+            }
+
+            if col in TEXT_COLUMNS:
+                top = conn.execute(
+                    f"SELECT [{col}], COUNT(*) AS cnt FROM daily_summary "
+                    f"WHERE [{col}] IS NOT NULL GROUP BY [{col}] ORDER BY cnt DESC LIMIT 3"
+                ).fetchall()
+                entry["top_values"] = [{"value": r[0], "count": r[1]} for r in top]
+                entry["min"] = None
+                entry["max"] = None
+                entry["mean"] = None
+            else:
+                if non_null > 0:
+                    stats = conn.execute(
+                        f"SELECT MIN([{col}]), MAX([{col}]), AVG([{col}]) "
+                        f"FROM daily_summary WHERE [{col}] IS NOT NULL"
+                    ).fetchone()
+                    entry["min"]  = round(stats[0], 3) if stats[0] is not None else None
+                    entry["max"]  = round(stats[1], 3) if stats[1] is not None else None
+                    entry["mean"] = round(stats[2], 3) if stats[2] is not None else None
+                else:
+                    entry["min"] = entry["max"] = entry["mean"] = None
+
+            recent_rows = conn.execute(
+                f"SELECT [{col}] FROM daily_summary ORDER BY date DESC LIMIT 7"
+            ).fetchall()
+            recent = [r[0] for r in recent_rows]
+            recent.reverse()
+            entry["recent"] = recent
+
+            features.append(entry)
+
+        conn.close()
+        return jsonify({"features": features})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ml/completeness-heatmap")
+@login_required
+def ml_completeness_heatmap():
+    """Daily completeness flags for the ML coverage heatmap."""
+    try:
+        conn = get_db()
+        if not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='daily_summary'"
+        ).fetchone():
+            conn.close()
+            return jsonify({"days": []})
+
+        actual = {c[1] for c in conn.execute("PRAGMA table_info(daily_summary)").fetchall()}
+
+        def col_case(col):
+            return col in actual
+
+        health_expr = (
+            "CASE WHEN sleep_duration_hr IS NOT NULL AND resting_hr IS NOT NULL THEN 1 ELSE 0 END"
+            if col_case("sleep_duration_hr") and col_case("resting_hr") else "0"
+        )
+        location_expr = (
+            "CASE WHEN distance_m IS NOT NULL OR movement_entropy IS NOT NULL THEN 1 ELSE 0 END"
+            if col_case("distance_m") or col_case("movement_entropy") else "0"
+        )
+        if col_case("steps") and col_case("active_energy_kcal"):
+            pi_expr = "CASE WHEN steps IS NOT NULL AND active_energy_kcal IS NOT NULL THEN 1 ELSE 0 END"
+        elif col_case("steps"):
+            pi_expr = "CASE WHEN steps IS NOT NULL THEN 1 ELSE 0 END"
+        else:
+            pi_expr = "0"
+        spend_expr = (
+            "CASE WHEN spend_gbp IS NOT NULL THEN 1 ELSE 0 END"
+            if col_case("spend_gbp") else "0"
+        )
+        weather_expr = (
+            "CASE WHEN temp_avg_c IS NOT NULL THEN 1 ELSE 0 END"
+            if col_case("temp_avg_c") else "0"
+        )
+
+        rows = conn.execute(f"""
+            SELECT
+                date,
+                {health_expr}   AS health_complete,
+                {location_expr} AS location_complete,
+                {pi_expr}       AS pi_complete,
+                {spend_expr}    AS spend_complete,
+                {weather_expr}  AS weather_complete
+            FROM daily_summary
+            ORDER BY date ASC
+        """).fetchall()
+
+        days = []
+        for r in rows:
+            hc, lc, pc, sc, wc = r[1] or 0, r[2] or 0, r[3] or 0, r[4] or 0, r[5] or 0
+            days.append({
+                "date":              r[0],
+                "health_complete":   hc,
+                "location_complete": lc,
+                "pi_complete":       pc,
+                "spend_complete":    sc,
+                "weather_complete":  wc,
+                "score":             hc + lc + pc + sc + wc,
+            })
+
+        conn.close()
+        return jsonify({"days": days})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Schedule / Prefect ────────────────────────────────────────────────────────
 
 try:
@@ -546,16 +788,35 @@ def _humanize_cron(expr: str) -> str:
             return expr
         minute, hour, dom, month, dow = parts
 
-        # Every N hours: "0 */4 * * *"
-        if '/' in hour:
-            n = hour.split('/')[1]
+        # Every N minutes: "*/5 * * * *"
+        if minute.startswith('*/') and hour == '*' and dom == '*' and month == '*' and dow == '*':
+            n = minute.split('/')[1]
             if n.isdigit():
+                return f"Every {n} minutes"
+            return expr
+
+        # Every N hours: "0 */4 * * *"
+        if '/' in hour and dom == '*' and month == '*' and dow == '*':
+            n = hour.split('/')[1]
+            if n.isdigit() and minute.isdigit():
                 return f"Every {n} hours"
             return expr
+
+        # Hourly: "0 * * * *" or "30 * * * *"
+        if hour == '*' and dom == '*' and month == '*' and dow == '*' and minute.isdigit():
+            m = int(minute)
+            return "Every hour" if m == 0 else f"Every hour at :{m:02d}"
 
         if not (minute.isdigit() and hour.isdigit()):
             return expr
         time_str = f"{int(hour):02d}:{int(minute):02d}"
+
+        # Every N days: "15 3 */2 * *"
+        if dom.startswith('*/') and month == '*' and dow == '*':
+            n = dom.split('/')[1]
+            if n.isdigit():
+                return f"Every {n} days at {time_str}"
+            return expr
 
         # Daily: "0 2 * * *"
         if dom == '*' and month == '*' and dow == '*':
@@ -588,7 +849,7 @@ def _cron_is_daily(expr: str) -> bool:
     try:
         parts = expr.strip().split()
         _, hour, dom, month, dow = parts
-        return dom == '*' and month == '*' and dow == '*' and '/' not in hour
+        return hour.isdigit() and dom == '*' and month == '*' and dow == '*'
     except Exception:
         return False
 
@@ -1235,6 +1496,50 @@ def backups_proxy():
         return jsonify({"error": f"FastAPI returned {resp.status_code}"}), 502
     except Exception as e:
         return jsonify({"error": str(e)}), 503
+
+
+# ── Restore ───────────────────────────────────────────────────────────────────
+
+@app.route("/api/database/restore/list")
+@login_required
+def restore_list_proxy():
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/database/restore/list",
+            headers=fastapi_headers(),
+            timeout=30,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/database/restore/stream")
+@login_required
+def restore_stream_proxy():
+    filename = request.args.get("filename", "")
+    live     = request.args.get("live", "false")
+
+    def generate():
+        try:
+            resp = requests.get(
+                f"{FASTAPI_URL}/database/restore/stream",
+                headers=fastapi_headers(),
+                params={"filename": filename, "live": live},
+                stream=True,
+                timeout=300,
+            )
+            for chunk in resp.iter_content(chunk_size=None):
+                if chunk:
+                    yield chunk
+        except Exception as e:
+            yield f"data: error|{e}\n\n".encode()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Trevor proxy ─────────────────────────────────────────────────────────────
