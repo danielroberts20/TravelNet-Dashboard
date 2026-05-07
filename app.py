@@ -1542,6 +1542,49 @@ def restore_stream_proxy():
     )
 
 
+# ── Codex ────────────────────────────────────────────────────────────────────
+
+DOCS_DIR = "/docs"
+
+@app.route("/api/codex/tree")
+@login_required
+def codex_tree():
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    sections = []
+    try:
+        for section_name in sorted(os.listdir(DOCS_DIR)):
+            section_path = os.path.join(DOCS_DIR, section_name)
+            if not os.path.isdir(section_path):
+                continue
+            files = []
+            for fname in sorted(os.listdir(section_path)):
+                if not fname.endswith(".md"):
+                    continue
+                slug  = f"{section_name}/{fname[:-3]}"
+                title = fname[:-3].replace("-", " ").title()
+                files.append({"slug": slug, "title": title})
+            sections.append({"name": section_name, "files": files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"sections": sections})
+
+
+@app.route("/api/codex/file/<path:slug>")
+@login_required
+def codex_file(slug):
+    if ".." in slug:
+        return jsonify({"error": "Not found"}), 404
+    file_path = os.path.join(DOCS_DIR, slug + ".md")
+    if not os.path.isfile(file_path):
+        return jsonify({"error": "Not found"}), 404
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return jsonify({"content": content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Trevor proxy ─────────────────────────────────────────────────────────────
 
 def trevor_headers():

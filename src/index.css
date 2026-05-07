@@ -866,3 +866,20 @@ td:hover { white-space: normal; word-break: break-all; }
 .trevor-msg--assistant .trevor-msg-content em        { color: var(--text-dim); }
 .trevor-msg--assistant .trevor-msg-content blockquote { border-left: 3px solid var(--border2); padding-left: 10px; color: var(--text-dim); margin: 6px 0; }
 .trevor-msg--assistant .trevor-msg-content hr        { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+/* ── Codex document viewer ──────────────────────────── */
+.codex-content { line-height: 1.7; }
+.codex-content h1 { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--text-hi); margin: 0 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.codex-content h2 { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--text-hi); margin: 24px 0 8px; }
+.codex-content h3 { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text-hi); margin: 18px 0 6px; }
+.codex-content p  { margin: 0 0 12px; }
+.codex-content ul, .codex-content ol { padding-left: 20px; margin: 0 0 12px; }
+.codex-content li { margin-bottom: 4px; }
+.codex-content code { background: rgba(0,0,0,.35); border-radius: 3px; padding: 2px 6px; font-size: 12px; font-family: var(--mono); color: var(--text-hi); }
+.codex-content pre { background: rgba(0,0,0,.35); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; overflow-x: auto; margin: 0 0 16px; }
+.codex-content pre code { background: none; padding: 0; font-size: 12px; }
+.codex-content blockquote { border-left: 3px solid var(--border2); padding-left: 14px; color: var(--text-dim); margin: 0 0 12px; }
+.codex-content strong { color: var(--text-hi); font-weight: 600; }
+.codex-content em    { color: var(--text-dim); }
+.codex-content hr    { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+.codex-content a     { color: var(--accent); text-decoration: underline; }
