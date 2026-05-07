@@ -712,8 +712,8 @@ def ml_completeness_heatmap():
             if col_case("sleep_duration_hr") and col_case("resting_hr") else "0"
         )
         location_expr = (
-            "CASE WHEN distance_m IS NOT NULL OR movement_entropy IS NOT NULL THEN 1 ELSE 0 END"
-            if col_case("distance_m") or col_case("movement_entropy") else "0"
+            "CASE WHEN distance_km IS NOT NULL OR movement_entropy IS NOT NULL THEN 1 ELSE 0 END"
+            if col_case("distance_km") or col_case("movement_entropy") else "0"
         )
         if col_case("steps") and col_case("active_energy_kcal"):
             pi_expr = "CASE WHEN steps IS NOT NULL AND active_energy_kcal IS NOT NULL THEN 1 ELSE 0 END"

@@ -5,6 +5,7 @@ import { Card } from '../components/Card'
 import { timeSince } from '../utils'
 
 const API_LIMITS = { 'exchangerate.host': 100, 'open-meteo': 300000 }
+const PREFECT_UI_URL = 'http://travelnet.tail186ff8.ts.net:4200/deployments'
 
 // Terminal Prefect states — no further transitions expected
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'CRASHED', 'CANCELLED'])
@@ -429,8 +430,15 @@ export default function Schedule() {
   return (
     <>
       <div className="page-header">
-        <h1>Schedule</h1>
-        <p>Prefect flow status and deployment schedule.</p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <h1>Schedule</h1>
+            <p>Prefect flow status and deployment schedule.</p>
+          </div>
+          <a href={PREFECT_UI_URL} target="_blank" rel="noreferrer" className="btn btn-ghost">
+            Prefect UI ↗
+          </a>
+        </div>
       </div>
 
       {error && (
