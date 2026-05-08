@@ -14,6 +14,7 @@ from flask import ( #type: ignore
     url_for, session, flash, jsonify, Response, stream_with_context,
     send_from_directory, abort
 )
+from flask_cors import CORS #type: ignore
 
 import logging
 import re
@@ -27,6 +28,12 @@ logging.getLogger("gunicorn.access").addFilter(SilenceGetRequests())
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
+
+# When DASHBOARD_ORIGIN is set (e.g. CF Pages URL), enable cross-origin requests.
+# Unset in Docker Compose = same-origin only, no change in behaviour.
+_dashboard_origin = os.environ.get("DASHBOARD_ORIGIN", "")
+if _dashboard_origin:
+    CORS(app, origins=[_dashboard_origin], supports_credentials=True)
 
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -116,7 +123,7 @@ def login():
             DASHBOARD_TOKEN,
             max_age=COOKIE_MAX_AGE,
             httponly=True,
-            samesite="Lax",
+            samesite="None",
             secure=True,
         )
         return resp
