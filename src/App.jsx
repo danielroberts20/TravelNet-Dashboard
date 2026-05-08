@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BackendProvider } from './contexts/BackendContext'
 import { Layout }       from './components/Layout'
 import Login            from './pages/Login'
 import Overview         from './pages/Overview'
@@ -16,6 +17,7 @@ import ML              from './pages/ML'
 
 export default function App() {
   return (
+    <BackendProvider>
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -35,5 +37,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </BackendProvider>
   )
 }

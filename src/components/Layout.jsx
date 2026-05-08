@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useSidebarStats } from '../hooks/useSidebarStats'
 import { useToast } from './Toast'
-import { apiFetch } from '../api'
+import { apiFetch, API_BASE } from '../api'
+import { useBackend } from '../contexts/BackendContext'
+import { BackendOffline } from './BackendOffline'
 
 const NAV_LINKS = [
   { to: '/',        icon: '◈', label: 'Overview',  end: true },
@@ -23,6 +25,7 @@ export function Layout() {
   const [time, setTime]       = useState('')
   const stats                 = useSidebarStats()
   const { Toast, showToast }  = useToast()
+  const { offline, retry }    = useBackend()
 
   // UTC clock — update every 30s
   useEffect(() => {
@@ -60,7 +63,7 @@ export function Layout() {
   }
 
   async function handleLogout() {
-    await fetch('/logout', { credentials: 'include' })
+    await fetch(API_BASE + '/logout', { credentials: 'include' })
     window.location.href = '/login'
   }
 
@@ -125,7 +128,7 @@ export function Layout() {
 
       {/* Main content — React Router fills this via <Outlet /> */}
       <main>
-        <Outlet />
+        {offline ? <BackendOffline onRetry={retry} /> : <Outlet />}
       </main>
 
       {/* Right sidebar */}

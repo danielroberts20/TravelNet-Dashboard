@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { API_BASE } from '../api'
 
 export default function Login() {
   const [token, setToken]   = useState('')
@@ -12,7 +13,7 @@ export default function Login() {
     setLoading(true)
     setError('')
     try {
-      const resp = await fetch('/login', {
+      const resp = await fetch(API_BASE + '/login', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
