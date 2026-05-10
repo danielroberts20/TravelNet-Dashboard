@@ -131,7 +131,7 @@ export default function Location() {
         )}
         <MapContainer
           center={[51.5, -0.1]} zoom={3}
-          style={{ height:'520px', borderRadius:'6px', border:'1px solid var(--border)', background:'var(--bg)' }}
+          style={{ height:'min(520px, 60vh)', borderRadius:'6px', border:'1px solid var(--border)', background:'var(--bg)' }}
           ref={mapRef}
         >
           <FitBounds coords={allCoords} />

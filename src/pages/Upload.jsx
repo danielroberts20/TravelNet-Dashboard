@@ -166,9 +166,6 @@ function FlightForm() {
     }
   }
 
-  const grid2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }
-  const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }
-
   return (
     <Card title="Flight" style={{ marginTop: '24px' }}>
       <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
@@ -188,7 +185,7 @@ function FlightForm() {
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-          <div style={grid2}>
+          <div className="form-grid-2">
             <Field label="Origin IATA *">
               <input style={inputStyle} value={fields.origin_iata} onChange={set('origin_iata')}
                      placeholder="SYD" maxLength={3} required
@@ -203,7 +200,7 @@ function FlightForm() {
             </Field>
           </div>
 
-          <div style={grid2}>
+          <div className="form-grid-2">
             <Field label="Departed (local) *">
               <input type="datetime-local" style={inputStyle} value={fields.departed_at}
                      onChange={set('departed_at')} required
@@ -218,7 +215,7 @@ function FlightForm() {
             </Field>
           </div>
 
-          <div style={grid3}>
+          <div className="form-grid-3">
             <Field label="Airline">
               <input style={inputStyle} value={fields.airline} onChange={set('airline')}
                      placeholder="Qantas"
@@ -333,8 +330,6 @@ function CostOfLivingForm() {
   }
 
   const derived = COUNTRY_MAP[fields.country_code]
-  const grid2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }
-  const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }
 
   return (
     <Card title="Cost of Living" style={{ marginTop: '24px' }}>
@@ -355,7 +350,7 @@ function CostOfLivingForm() {
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-          <div style={grid2}>
+          <div className="form-grid-2">
             <Field label="Country *">
               <select style={inputStyle} value={fields.country_code}
                       onChange={e => setFields(f => ({ ...f, country_code: e.target.value }))}
@@ -376,7 +371,7 @@ function CostOfLivingForm() {
             {derived.country} · {derived.currency}
           </div>
 
-          <div style={grid3}>
+          <div className="form-grid-3">
             <Field label="Source">
               <input style={inputStyle} value={fields.source} onChange={set('source')}
                      onFocus={focus} onBlur={blur} required />
@@ -406,7 +401,7 @@ function CostOfLivingForm() {
             Cost Indices — NYC = 100 baseline
           </div>
 
-          <div style={grid3}>
+          <div className="form-grid-3">
             <Field label="CoL Index *">
               <input type="number" style={inputStyle} value={fields.col_index} onChange={set('col_index')}
                      step="0.1" min="0" max="200" placeholder="e.g. 65.4"
@@ -425,7 +420,7 @@ function CostOfLivingForm() {
             </Field>
           </div>
 
-          <div style={grid2}>
+          <div className="form-grid-2">
             <Field label="Groceries Index">
               <input type="number" style={inputStyle} value={fields.groceries_index} onChange={set('groceries_index')}
                      step="0.1" min="0" max="200" placeholder="optional"
@@ -438,7 +433,7 @@ function CostOfLivingForm() {
             </Field>
           </div>
 
-          <div style={{ ...grid2, opacity: fields.city.trim() ? 1 : 0.35, transition: 'opacity .2s' }}>
+          <div className="form-grid-2" style={{ opacity: fields.city.trim() ? 1 : 0.35, transition: 'opacity .2s' }}>
             <Field label="Centre latitude">
               <input type="number" style={inputStyle} value={fields.center_lat} onChange={set('center_lat')}
                      step="0.0001" placeholder="e.g. 51.5074"

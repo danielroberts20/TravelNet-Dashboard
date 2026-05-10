@@ -38,7 +38,7 @@ export default function Login() {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div style={{
-        width: '340px', background: 'var(--surface)',
+        width: '340px', maxWidth: '90vw', background: 'var(--surface)',
         border: '1px solid var(--border)', borderRadius: '8px', padding: '36px 32px',
       }}>
         <div style={{

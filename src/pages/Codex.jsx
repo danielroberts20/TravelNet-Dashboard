@@ -81,7 +81,7 @@ export default function Codex() {
     <>
       <style>{`
         .codex-tabs::-webkit-scrollbar { display: none; }
-        .codex-content table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13px; }
+        .codex-content table { display: block; overflow-x: auto; width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13px; }
         .codex-content table th { background: rgba(255,255,255,.04); color: var(--text-hi); font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid var(--border2); font-family: var(--mono); font-size: 12px; }
         .codex-content table td { padding: 7px 12px; border: 1px solid var(--border); color: var(--text); vertical-align: top; }
         .codex-content table tr:nth-child(even) td { background: rgba(255,255,255,.02); }
