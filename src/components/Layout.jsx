@@ -18,6 +18,7 @@ const NAV_LINKS = [
   { to: '/trevor',  icon: '◉', label: 'Trevor' },
   { to: '/codex',   icon: '◧', label: 'Codex' },
   { to: '/ml',      icon: '◆', label: 'Machine Learning' },
+  { to: '/places',  icon: '◎', label: 'Places' },
 ]
 
 export function Layout() {

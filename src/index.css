@@ -545,7 +545,7 @@ label { font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 
 .schema-toggle:hover { color: var(--text-hi); background: rgba(255,255,255,.02); }
 .schema-toggle .arrow { transition: transform .2s; display: inline-block; }
 .schema-toggle.open .arrow { transform: rotate(90deg); }
-.schema-body { padding: 0 16px 14px; }
+.schema-body { padding: 0 16px 14px; overflow-x: auto; }
 .schema-body table th { font-size: 10px; }
 .schema-body table td { font-size: 12px; padding: 7px 10px; }
 
@@ -626,7 +626,7 @@ td:hover { white-space: normal; word-break: break-all; }
 .status-dot.disconnected { background: var(--text-dim); }
 .status-dot.error        { background: var(--red); }
 .log-controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.level-filter { display: flex; gap: 3px; }
+.level-filter { display: flex; gap: 3px; flex-wrap: wrap; }
 .level-btn {
   font-size: 11px; padding: 4px 9px;
   font-family: var(--mono);
@@ -735,9 +735,30 @@ td:hover { white-space: normal; word-break: break-all; }
   display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 6px 12px; margin-bottom: 20px;
 }
+@media (max-width: 600px) {
+  .prune-table-grid { grid-template-columns: repeat(2, 1fr); }
+}
 .field-label {
   font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
   color: var(--text-dim); display: block; margin-bottom: 6px;
+}
+
+/* ── Responsive form grids (used in Upload, etc.) ───── */
+.form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) {
+  .form-grid-2, .form-grid-3 { grid-template-columns: 1fr; }
+}
+
+/* ── Places page ─────────────────────────────────────── */
+.places-layout {
+  display: grid;
+  grid-template-columns: 35% 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 600px) {
+  .places-layout { grid-template-columns: 1fr; }
 }
 
 /* ── Location page ───────────────────────────────────── */

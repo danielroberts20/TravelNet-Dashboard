@@ -14,6 +14,7 @@ import Config           from './pages/Config'
 import Trevor           from './pages/Trevor'
 import Codex           from './pages/Codex'
 import ML              from './pages/ML'
+import Places          from './pages/Places'
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/trevor"          element={<Trevor />} />
           <Route path="/codex"           element={<Codex />} />
           <Route path="/ml"              element={<ML />} />
+          <Route path="/places"          element={<Places />} />
         </Route>
       </Routes>
     </BrowserRouter>

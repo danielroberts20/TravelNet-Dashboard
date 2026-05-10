@@ -137,7 +137,7 @@ def logout():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1231,6 +1231,83 @@ def upload_cost_of_living():
             except Exception:
                 pass
         return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+# ── Places ────────────────────────────────────────────────────────────────────
+
+
+@app.route("/api/places")
+@login_required
+def places_list():
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/upload/places/list",
+            headers=fastapi_headers(),
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>", methods=["PATCH"])
+@login_required
+def places_update(place_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.patch(
+            f"{FASTAPI_URL}/upload/places/{place_id}",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>/geocode", methods=["POST"])
+@login_required
+def places_geocode(place_id):
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/upload/places/{place_id}/geocode",
+            headers=fastapi_headers(),
+            timeout=30,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>/visits")
+@login_required
+def places_visits(place_id):
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/upload/places/{place_id}/visits",
+            headers=fastapi_headers(),
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/visits/<int:visit_id>", methods=["PATCH"])
+@login_required
+def places_visits_update(visit_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.patch(
+            f"{FASTAPI_URL}/upload/places/visits/{visit_id}",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
     except Exception as e:
         return jsonify({"error": str(e)}), 503
 
