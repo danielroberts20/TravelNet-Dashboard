@@ -638,23 +638,42 @@ td:hover { white-space: normal; word-break: break-all; }
 .level-btn.active { border-color: var(--accent); color: var(--accent); }
 
 /* ── Config page ─────────────────────────────────────── */
-.config-group { margin-bottom: 28px; }
+.config-page-layout    { display: flex; height: calc(100vh - 200px); gap: 0; }
+.config-sidebar        { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border);
+                         padding: 16px 0; overflow-y: auto; }
+.config-sidebar-group  { padding: 8px 16px; cursor: pointer; border-left: 2px solid transparent;
+                         font-size: 12px; font-family: var(--mono); display: flex;
+                         justify-content: space-between; align-items: center; }
+.config-sidebar-group.active { border-left-color: var(--accent); color: var(--accent); }
+.config-sidebar-group:hover  { background: rgba(255,255,255,0.04); }
+.config-panel          { flex: 1; overflow-y: auto; padding: 24px; padding-bottom: 60px; }
+.config-group          { margin-bottom: 28px; }
 .config-group-title {
   font-family: var(--mono); font-size: 11px; font-weight: 600;
   letter-spacing: .1em; text-transform: uppercase;
   color: var(--text-dim); margin-bottom: 10px;
 }
-.config-row {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px;
-  display: grid; grid-template-columns: 1fr 1fr auto;
-  gap: 16px; align-items: center;
-}
-.config-row.overridden { border-left: 3px solid var(--accent); }
-.config-row.dirty      { border-left: 3px solid var(--yellow); }
+.config-group-sticky   { position: sticky; top: 0; background: var(--bg); z-index: 1;
+                         padding: 4px 0; }
+.config-card           { background: var(--surface); border: 1px solid var(--border);
+                         border-left: 2px solid transparent; border-radius: var(--radius);
+                         padding: 16px; margin-bottom: 12px; }
+.config-card.overridden { border-left-color: var(--accent); }
+.config-card.dirty      { border-left-color: var(--yellow); background: rgba(240,184,61,.04); }
+.config-card-header    { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.config-type-tag       { font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+                         padding: 1px 5px; border: 1px solid var(--border); border-radius: 3px; }
+.config-card-footer    { display: flex; justify-content: space-between; align-items: center;
+                         margin-top: 12px; }
+.config-dict-summary   { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.config-advanced-toggle { margin: 4px 0 8px; font-size: 11px; }
+.config-action-bar     { position: fixed; bottom: 0; left: 0; right: 0; height: 52px;
+                         display: flex; align-items: center; padding: 0 24px; gap: 16px;
+                         background: var(--surface); border-top: 1px solid var(--border);
+                         z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+.config-action-bar.visible { opacity: 1; pointer-events: auto; }
 .config-key  { font-family: var(--mono); font-size: 13px; color: var(--text-hi); }
 .config-desc { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
-.config-type { font-size: 10px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; }
 .config-input-wrap { position: relative; }
 .config-input {
   width: 100%; background: var(--bg); border: 1px solid var(--border2);
@@ -663,10 +682,8 @@ td:hover { white-space: normal; word-break: break-all; }
 }
 .config-input:focus    { border-color: var(--accent); }
 .config-input.modified { border-color: var(--yellow); }
-.config-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-.config-default {
-  font-size: 11px; color: var(--text-dim); font-family: var(--mono); margin-top: 4px;
-}
+.config-default        { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+.btn-sm                { font-size: 11px !important; padding: 4px 10px !important; }
 
 .chip-input {
   display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
@@ -719,16 +736,7 @@ td:hover { white-space: normal; word-break: break-all; }
 }
 .dict-add:hover { background: var(--surface); }
 
-.restart-banner, .restart-needed-banner {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: var(--surface); border-radius: 8px; padding: 12px 20px;
-  align-items: center; gap: 14px; font-family: var(--mono); font-size: 13px;
-  z-index: 99; box-shadow: 0 4px 24px rgba(0,0,0,.4); display: none;
-}
-.restart-banner          { border: 1px solid var(--yellow); color: var(--yellow); }
-.restart-needed-banner   { border: 1px solid var(--accent); color: var(--accent); z-index: 98; }
-.restart-banner.visible,
-.restart-needed-banner.visible { display: flex; }
+/* restart-banner / restart-needed-banner removed — replaced by .config-action-bar */
 
 /* ── Database page ───────────────────────────────────── */
 .prune-table-grid {

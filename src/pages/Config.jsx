@@ -1,9 +1,30 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiFetch } from '../api'
 import { Modal } from '../components/Modal'
+import { Badge } from '../components/Badge'
 import { useToast } from '../components/Toast'
 
 const RESTART_KEY = 'tn_restart_needed'
+
+const GROUP_ORDER = [
+  'Travel Itinerary', 'Notifications', 'Financial', 'Health',
+  'Location', 'Weather', 'Daily Summary',
+  'Storage & Backups', 'Flight Detection', 'Journal',
+]
+
+const LOCATION_USER_KEYS = new Set([
+  'LOCATION_CHANGE_RADIUS_M', 'LOCATION_STAY_DURATION_MINS',
+  'LOCATION_REVISIT_DURATION_MINS', 'LOCATION_DEPARTURE_CONFIRMATION_MINS',
+  'LOCATION_MINIMUM_POINTS', 'LOCATION_STREAK_POINT_LIMIT',
+  'LOCATION_NOISE_ACCURACY_THRESHOLD', 'LOCATION_TIME_WINDOW',
+  'LOCATION_DIST_THRESHOLD', 'GAP_ANNOTATION_TOLERANCE_MINUTES',
+  'DWELL_MIN_POINTS',
+])
+
+const LOCATION_ADVANCED_KEYS = new Set([
+  'LOCATION_STATIONARITY_RADIUS_M', 'TIER2_TRAILING_SKIP',
+  'TIER2_DISPLACEMENT_M', 'TIER2_RETURN_M', 'TIER2_WINDOW_S',
+])
 
 // ── Type helpers ─────────────────────────────────────────────────────────────
 
@@ -116,30 +137,90 @@ function DictEditor({ value, valueInputType, onChange }) {
   )
 }
 
-// ── ConfigRow ────────────────────────────────────────────────────────────────
+// ── TransactionCategoriesModal ────────────────────────────────────────────────
 
-function ConfigRow({ configKey, entry, onSave, onReset }) {
+function TransactionCategoriesModal({ open, value, onChange, onClose }) {
+  const [localVal, setLocalVal] = useState(value || {})
+
+  useEffect(() => {
+    if (open) setLocalVal(value || {})
+  }, [open, value])
+
+  function handleSave() {
+    onChange(localVal)
+    onClose()
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Edit Transaction Categories" width="680px">
+      <DictEditor
+        value={localVal}
+        valueInputType="text"
+        onChange={setLocalVal}
+      />
+      <div className="modal-actions" style={{ marginTop: '16px' }}>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={handleSave}>Save</button>
+      </div>
+    </Modal>
+  )
+}
+
+// ── ConfigCard ────────────────────────────────────────────────────────────────
+
+function ConfigCard({ configKey, entry, onSave, onReset, onMarkDirty }) {
   const [localVal, setLocalVal] = useState(valueToInput(entry.type, entry.value))
   const [dirty, setDirty]       = useState(false)
+  const [catModalOpen, setCatModalOpen] = useState(false)
 
   useEffect(() => {
     setLocalVal(valueToInput(entry.type, entry.value))
     setDirty(false)
   }, [entry])
 
-  function markDirty(val) { setLocalVal(val); setDirty(true) }
+  function markDirty(val) {
+    setLocalVal(val)
+    setDirty(true)
+    onMarkDirty()
+  }
 
+  // Default value display
   const defaultJson = JSON.stringify(entry.default)
-  const truncated   = defaultJson.length > 60
-  const displayStr  = truncated ? defaultJson.slice(0, 60) + '…' : defaultJson
+  let defaultDisplay
+  let defaultClickHandler = null
+  if (entry.type.startsWith('list')) {
+    const count = Array.isArray(entry.default) ? entry.default.length : 0
+    defaultDisplay = `Default: [${count} items]`
+    defaultClickHandler = () => navigator.clipboard.writeText(defaultJson)
+  } else if (entry.type.startsWith('dict')) {
+    const count = entry.default && typeof entry.default === 'object' ? Object.keys(entry.default).length : 0
+    defaultDisplay = `Default: {${count} keys}`
+    defaultClickHandler = () => navigator.clipboard.writeText(defaultJson)
+  } else {
+    const truncated = defaultJson.length > 80
+    defaultDisplay = truncated ? `Default: ${defaultJson.slice(0, 80)}…` : `Default: ${defaultJson}`
+    defaultClickHandler = truncated ? () => navigator.clipboard.writeText(defaultJson) : null
+  }
 
-  const rowClass = ['config-row',
-    entry.overridden ? 'overridden' : '',
-    dirty ? 'dirty' : '',
+  const cardClass = ['config-card',
+    dirty ? 'dirty' : (entry.overridden ? 'overridden' : ''),
   ].filter(Boolean).join(' ')
 
+  const desc = (!entry.description || entry.description === 'Dates')
+    ? <em style={{ color: 'var(--text-dim)' }}>No description.</em>
+    : entry.description
+
   let inputEl
-  if (entry.type === 'bool') {
+  if (configKey === 'TRANSACTION_CATEGORIES') {
+    inputEl = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <span className="config-dict-summary">{Object.keys(localVal).length} categories defined</span>
+        <button className="btn btn-ghost btn-sm" onClick={() => setCatModalOpen(true)}>
+          Edit categories →
+        </button>
+      </div>
+    )
+  } else if (entry.type === 'bool') {
     inputEl = (
       <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
         <input
@@ -171,38 +252,91 @@ function ConfigRow({ configKey, entry, onSave, onReset }) {
   }
 
   return (
-    <div className={rowClass}>
-      <div>
-        <div className="config-key">{configKey}</div>
-        <div className="config-desc">{entry.description || ''}</div>
-        <div className="config-type">{entry.type} · {entry.module}</div>
+    <div className={cardClass}>
+      <div className="config-card-header">
+        <span className="config-key">{configKey}</span>
+        {entry.overridden && <Badge variant="blue">overridden</Badge>}
+        <span className="config-type-tag">{entry.type}</span>
       </div>
 
-      <div className="config-input-wrap">
-        {inputEl}
-        <div
+      <div className="config-desc" style={{ marginBottom: '10px' }}>{desc}</div>
+
+      <div>{inputEl}</div>
+
+      <div className="config-card-footer">
+        <span
           className="config-default"
-          title={truncated ? 'Click to copy full default' : undefined}
-          style={{ cursor: truncated ? 'pointer' : undefined }}
-          onClick={truncated ? () => navigator.clipboard.writeText(defaultJson) : undefined}
+          style={{ cursor: defaultClickHandler ? 'pointer' : undefined }}
+          title={defaultClickHandler ? 'Click to copy' : undefined}
+          onClick={defaultClickHandler || undefined}
         >
-          default: {displayStr}
+          {defaultDisplay}
+        </span>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          {dirty && (
+            <button className="btn btn-primary btn-sm" onClick={() => onSave(configKey, localVal, entry.type)}>
+              Save
+            </button>
+          )}
+          {entry.overridden && (
+            <button className="btn btn-ghost btn-sm" onClick={() => onReset(configKey)} title="Reset to default">
+              ↩
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="config-actions">
-        {dirty && (
-          <button className="btn btn-primary" onClick={() => onSave(configKey, localVal, entry.type)} style={{ fontSize: '11px', padding: '5px 12px' }}>
-            Save
-          </button>
-        )}
-        {entry.overridden && (
-          <button className="btn btn-ghost" onClick={() => onReset(configKey)} style={{ fontSize: '11px', padding: '5px 10px' }} title="Reset to default">
-            ↩
-          </button>
-        )}
-      </div>
+      {configKey === 'TRANSACTION_CATEGORIES' && (
+        <TransactionCategoriesModal
+          open={catModalOpen}
+          value={localVal}
+          onChange={val => markDirty(val)}
+          onClose={() => setCatModalOpen(false)}
+        />
+      )}
     </div>
+  )
+}
+
+// ── LocationGroup ────────────────────────────────────────────────────────────
+
+function LocationGroup({ entries, onSave, onReset, onMarkDirty, renderKey }) {
+  const [showAdvanced, setShowAdvanced] = useState(false)
+
+  const userEntries     = entries.filter(([k]) => LOCATION_USER_KEYS.has(k))
+  const advancedEntries = entries.filter(([k]) => LOCATION_ADVANCED_KEYS.has(k))
+  const otherEntries    = entries.filter(([k]) => !LOCATION_USER_KEYS.has(k) && !LOCATION_ADVANCED_KEYS.has(k))
+
+  const cardProps = (key, entry) => ({
+    key: `${key}-${renderKey}`,
+    configKey: key,
+    entry,
+    onSave,
+    onReset,
+    onMarkDirty: () => onMarkDirty(key),
+  })
+
+  return (
+    <>
+      {[...userEntries, ...otherEntries].map(([key, entry]) => (
+        <ConfigCard {...cardProps(key, entry)} />
+      ))}
+      {advancedEntries.length > 0 && (
+        <>
+          <button
+            className="btn btn-ghost btn-sm config-advanced-toggle"
+            onClick={() => setShowAdvanced(v => !v)}
+          >
+            {showAdvanced
+              ? '▾ Hide advanced parameters'
+              : `▸ Show advanced parameters (${advancedEntries.length})`}
+          </button>
+          {showAdvanced && advancedEntries.map(([key, entry]) => (
+            <ConfigCard {...cardProps(key, entry)} />
+          ))}
+        </>
+      )}
+    </>
   )
 }
 
@@ -263,6 +397,7 @@ export default function Config() {
   const [needsRestart, setNeedsRestart] = useState(() => localStorage.getItem(RESTART_KEY) === '1')
   const [restartOpen, setRestartOpen]   = useState(false)
   const [renderKey, setRenderKey]       = useState(0)
+  const [activeGroup, setActiveGroup]   = useState('All')
   const { Toast, showToast }            = useToast()
 
   function persistRestart(val) {
@@ -336,30 +471,33 @@ export default function Config() {
       if (!g[name]) g[name] = []
       g[name].push([key, entry])
     }
-    return Object.entries(g).sort(([aName, aEntries], [bName, bEntries]) => {
-      const aOv = aEntries.filter(([, e]) => e.overridden).length
-      const bOv = bEntries.filter(([, e]) => e.overridden).length
-      if (aOv !== bOv) return bOv - aOv
-      return aName.localeCompare(bName)
+    return Object.entries(g).sort(([aName], [bName]) => {
+      const ai = GROUP_ORDER.indexOf(aName)
+      const bi = GROUP_ORDER.indexOf(bName)
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
     })
   })() : []
 
+  const visibleGroups = activeGroup === 'All'
+    ? groups
+    : groups.filter(([name]) => name === activeGroup)
+
   const hasPending = pendingKeys.size > 0
+  const showBar    = hasPending || needsRestart
+
+  const pendingArr   = Array.from(pendingKeys)
+  const shownKeys    = pendingArr.slice(0, 3)
+  const extraCount   = pendingArr.length - shownKeys.length
+
+  function addPending(key) {
+    setPendingKeys(prev => { const s = new Set(prev); s.add(key); return s })
+  }
 
   return (
     <>
       <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-          <div>
-            <h1>Config</h1>
-            <p>Edit server configuration. Changes require a server restart to take effect.</p>
-          </div>
-          <button
-            className="btn btn-ghost"
-            onClick={() => setRestartOpen(true)}
-            style={needsRestart ? { borderColor: 'var(--yellow)', color: 'var(--yellow)' } : {}}
-          >↺ Restart Server</button>
-        </div>
+        <h1>Config</h1>
+        <p>Edit server configuration. Changes require a server restart to take effect.</p>
       </div>
 
       {loadError && (
@@ -371,52 +509,122 @@ export default function Config() {
         <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>Loading config…</div>
       )}
 
-      {groups.map(([groupName, entries]) => {
-        const overrideCount = entries.filter(([, e]) => e.overridden).length
-        return (
-          <div key={groupName} className="config-group">
-            <div className="config-group-title">
-              {groupName}
-              {overrideCount > 0 && (
-                <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, color: 'var(--accent)', fontSize: '10px', marginLeft: '8px' }}>
-                  {overrideCount} overridden
-                </span>
-              )}
+      {configData && (
+        <div className="config-page-layout">
+          {/* Left sidebar */}
+          <div className="config-sidebar">
+            <div style={{ padding: '0 16px 8px', fontSize: '10px', letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
+              Groups
             </div>
-            {entries.map(([key, entry]) => (
-              <ConfigRow
-                key={`${key}-${renderKey}`}
-                configKey={key}
-                entry={entry}
-                onSave={(k, v, t) => {
-                  setPendingKeys(prev => { const s = new Set(prev); s.add(k); return s })
-                  handleSave(k, v, t)
-                }}
-                onReset={handleReset}
-              />
-            ))}
+
+            <div
+              className={'config-sidebar-group' + (activeGroup === 'All' ? ' active' : '')}
+              onClick={() => setActiveGroup('All')}
+            >
+              <span>All</span>
+              <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'var(--mono)' }}>
+                {groups.reduce((sum, [, entries]) => sum + entries.length, 0)} keys
+              </span>
+            </div>
+
+            {groups.map(([name, entries]) => {
+              const overrideCount = entries.filter(([, e]) => e.overridden).length
+              return (
+                <div
+                  key={name}
+                  className={'config-sidebar-group' + (activeGroup === name ? ' active' : '')}
+                  onClick={() => setActiveGroup(name)}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0, overflow: 'hidden' }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                    {overrideCount > 0 && (
+                      <span className="badge badge-blue" style={{ fontSize: '9px', padding: '1px 4px', flexShrink: 0 }}>{overrideCount}</span>
+                    )}
+                  </span>
+                  <span style={{ color: 'var(--text-dim)', fontSize: '10px', fontFamily: 'var(--mono)', flexShrink: 0, marginLeft: '4px' }}>
+                    {entries.length}
+                  </span>
+                </div>
+              )
+            })}
           </div>
-        )
-      })}
 
-      {/* Unsaved changes banner */}
-      <div className={'restart-banner' + (hasPending ? ' visible' : '')}>
-        <span>⚠ Unsaved changes</span>
-        <button className="btn btn-ghost" style={{ fontSize: '11px', color: 'var(--text-dim)' }} onClick={handleDiscard}>Discard</button>
-      </div>
+          {/* Right panel */}
+          <div className="config-panel">
+            {visibleGroups.map(([groupName, entries]) => {
+              const overrideCount = entries.filter(([, e]) => e.overridden).length
+              return (
+                <div key={groupName} className="config-group">
+                  {activeGroup === 'All' && (
+                    <div className="config-group-title config-group-sticky">
+                      {groupName}
+                      {overrideCount > 0 && (
+                        <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, color: 'var(--accent)', fontSize: '10px', marginLeft: '8px' }}>
+                          {overrideCount} overridden
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {groupName === 'Location' ? (
+                    <LocationGroup
+                      entries={entries}
+                      onSave={(k, v, t) => { addPending(k); handleSave(k, v, t) }}
+                      onReset={handleReset}
+                      onMarkDirty={addPending}
+                      renderKey={renderKey}
+                    />
+                  ) : (
+                    entries.map(([key, entry]) => (
+                      <ConfigCard
+                        key={`${key}-${renderKey}`}
+                        configKey={key}
+                        entry={entry}
+                        onSave={(k, v, t) => { addPending(k); handleSave(k, v, t) }}
+                        onReset={handleReset}
+                        onMarkDirty={() => addPending(key)}
+                      />
+                    ))
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* Restart required banner */}
-      <div
-        className={'restart-needed-banner' + (needsRestart ? ' visible' : '')}
-        style={{ bottom: needsRestart && hasPending ? '88px' : '24px' }}
-      >
-        <span>↺ Restart required to apply changes</span>
-        <button className="btn btn-ghost" style={{ fontSize: '11px' }} onClick={() => setRestartOpen(true)}>Restart now</button>
-        <button className="btn btn-ghost" style={{ fontSize: '11px', color: 'var(--text-dim)' }} onClick={() => persistRestart(false)}>Dismiss</button>
+      {/* Unified action bar */}
+      <div className={'config-action-bar' + (showBar ? ' visible' : '')}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+          {hasPending && (
+            <>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--yellow)', whiteSpace: 'nowrap' }}>
+                ⚠ Unsaved:{' '}
+                {shownKeys.map((k, i) => (
+                  <span key={k}>{i > 0 && ', '}<code>{k}</code></span>
+                ))}
+                {extraCount > 0 && ` +${extraCount} more`}
+              </span>
+              <button className="btn btn-ghost btn-sm" onClick={handleDiscard}>Discard</button>
+            </>
+          )}
+        </div>
+
+        {hasPending && needsRestart && (
+          <div style={{ width: '1px', height: '24px', background: 'var(--border)', flexShrink: 0 }} />
+        )}
+
+        {needsRestart && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--yellow)', whiteSpace: 'nowrap' }}>
+              ↺ Restart required
+            </span>
+            <button className="btn btn-primary btn-sm" onClick={() => setRestartOpen(true)}>Restart now</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => persistRestart(false)}>Dismiss</button>
+          </div>
+        )}
       </div>
 
       <RestartModal open={restartOpen} onClose={() => setRestartOpen(false)} onDone={() => persistRestart(false)} />
-
       <Toast />
     </>
   )
