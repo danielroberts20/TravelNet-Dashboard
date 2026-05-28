@@ -154,7 +154,7 @@ function ScheduleSection({ label, rows, showNext, style }) {
         {label} <span style={{ opacity: 0.6 }}>({rows.length})</span>
       </button>
       {open && (
-        <div className="table-wrap">
+        <div className="table-wrap schedule-table">
           <table>
             <thead>
               <tr>

@@ -105,9 +105,10 @@ export function Layout() {
         <div className="nav-footer">
           <button
             onClick={handleLogout}
-            style={{ background: 'none', border: 'none', padding: 0,
+            style={{ background: 'none', border: 'none', padding: '10px 4px',
                      cursor: 'pointer', color: 'var(--text-dim)',
-                     fontSize: '11px', fontFamily: 'var(--sans)' }}
+                     fontSize: '11px', fontFamily: 'var(--sans)',
+                     minHeight: '44px' }}
           >
             logout
           </button>

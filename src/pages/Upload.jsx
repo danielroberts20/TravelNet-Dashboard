@@ -248,7 +248,7 @@ function FlightForm() {
           </Field>
 
           <button type="submit" disabled={loading} className="btn btn-primary"
-                  style={{ alignSelf: 'flex-start', opacity: loading ? 0.5 : 1 }}>
+                  style={{ width: '100%', justifyContent: 'center', opacity: loading ? 0.5 : 1 }}>
             {loading ? 'Submitting…' : '↑ Log Flight'}
           </button>
         </div>
@@ -453,7 +453,7 @@ function CostOfLivingForm() {
           </Field>
 
           <button type="submit" disabled={loading} className="btn btn-primary"
-                  style={{ alignSelf: 'flex-start', opacity: loading ? 0.5 : 1 }}>
+                  style={{ width: '100%', justifyContent: 'center', opacity: loading ? 0.5 : 1 }}>
             {loading ? 'Submitting…' : '↑ Log Cost of Living'}
           </button>
         </div>

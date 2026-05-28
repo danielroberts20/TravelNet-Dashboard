@@ -158,7 +158,7 @@ export default function Location() {
                             color={isLast ? GREEN : BLUE}
                             fillColor={isLast ? GREEN : BLUE}
                             fillOpacity={0.75} weight={1}>
-                <Tooltip direction="top" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
+                <Tooltip direction="auto" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
               </CircleMarker>
             )
           })}
@@ -180,7 +180,7 @@ export default function Location() {
                             color={isLast ? GREEN : ORANGE}
                             fillColor={isLast ? GREEN : ORANGE}
                             fillOpacity={0.75} weight={1}>
-                <Tooltip direction="top" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
+                <Tooltip direction="auto" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
               </CircleMarker>
             )
           })}

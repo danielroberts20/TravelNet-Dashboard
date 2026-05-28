@@ -152,7 +152,7 @@ function TransactionCategoriesModal({ open, value, onChange, onClose }) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Edit Transaction Categories" width="680px">
+    <Modal open={open} onClose={onClose} title="Edit Transaction Categories" width="min(680px, 94vw)">
       <DictEditor
         value={localVal}
         valueInputType="text"
@@ -369,7 +369,7 @@ function RestartModal({ open, onClose, onDone }) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="↺ Restart Server" width="380px">
+    <Modal open={open} onClose={onClose} title="↺ Restart Server" width="min(380px, 94vw)">
       <p style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '18px', lineHeight: 1.6, fontFamily: 'var(--mono)' }}>
         This will restart the <code>travelnet</code> FastAPI container. Config overrides will be applied on startup.
         The container will be unavailable for a few seconds.

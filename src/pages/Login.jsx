@@ -76,7 +76,8 @@ export default function Login() {
             disabled={loading}
             style={{
               width: '100%', background: 'var(--accent)', color: '#fff',
-              border: 'none', borderRadius: '6px', padding: '10px',
+              border: 'none', borderRadius: '6px', padding: '12px 10px',
+              minHeight: '44px',
               fontFamily: 'var(--mono)', fontSize: '13px', fontWeight: 500,
               cursor: loading ? 'not-allowed' : 'pointer', letterSpacing: '.04em',
               opacity: loading ? 0.7 : 1,

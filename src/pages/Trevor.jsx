@@ -172,7 +172,7 @@ export default function Trevor() {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask Trevor… (Enter to send, Shift+Enter for newline)"
+          placeholder="Ask Trevor… (Enter or tap Send)"
           rows={1}
           disabled={loading}
         />

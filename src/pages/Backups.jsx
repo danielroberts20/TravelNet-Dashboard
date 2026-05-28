@@ -240,8 +240,9 @@ function RestoreModal({ open, onClose }) {
                     borderBottom: i < backups.length - 1 ? '1px solid var(--border)' : 'none',
                   }}
                 >
-                  <div>
-                    <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-hi)' }}>{b.filename}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-hi)',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.filename}</div>
                     <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>{formatSize(b.size_bytes)}</div>
                   </div>
                   {selected === b.filename && (
