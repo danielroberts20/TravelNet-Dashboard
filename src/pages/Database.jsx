@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch, apiJson } from '../api'
 import { Modal } from '../components/Modal'
+import { groupTablesByDomain, defaultGroupExpanded } from '../utils'
 
 // ── Prune modal ──────────────────────────────────────────────────────────────
 
@@ -416,15 +417,108 @@ function PruneModal({ open, onClose, onDone }) {
   )
 }
 
+// ── Grouped table sections ───────────────────────────────────────────────────
+
+function GroupSection({ group, rowCounts, expanded, onToggle, query }) {
+  const navigate = useNavigate()
+  const isOpen = query ? true : (expanded[group.label] ?? true)
+
+  const totalCount = group.rows.reduce((sum, t) => {
+    const c = rowCounts[t.name]
+    return sum + (typeof c === 'number' ? c : 0)
+  }, 0)
+
+  return (
+    <div style={{ marginBottom: '8px' }}>
+      <div
+        onClick={() => !query && onToggle(group.label)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '9px 16px',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: isOpen ? 'var(--radius) var(--radius) 0 0' : 'var(--radius)',
+          cursor: query ? 'default' : 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--text-hi)', flex: 1 }}>
+          {group.label}
+        </span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+          {group.rows.length} {group.rows.length === 1 ? 'table' : 'tables'}
+          {totalCount > 0 && (
+            <> · {totalCount.toLocaleString()} rows</>
+          )}
+        </span>
+        {!query && (
+          <span style={{
+            color: 'var(--text-dim)', fontSize: '11px',
+            display: 'inline-block',
+            transition: 'transform .15s',
+            transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+          }}>
+            ▾
+          </span>
+        )}
+      </div>
+
+      {isOpen && (
+        <div style={{
+          border: '1px solid var(--border)',
+          borderTop: 'none',
+          borderRadius: '0 0 var(--radius) var(--radius)',
+          overflow: 'hidden',
+        }}>
+          <div className="table-wrap">
+          <table style={{ margin: 0 }}>
+            <tbody>
+              {group.rows.map(t => (
+                <tr
+                  key={t.name}
+                  onClick={() => navigate(`/db/table/${encodeURIComponent(t.name)}`)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td style={{ color: 'var(--text-hi)', paddingLeft: '24px' }}>
+                    {t.name}
+                    {t.type === 'view' && (
+                      <span className="badge badge-blue" style={{ marginLeft: '6px' }}>view</span>
+                    )}
+                  </td>
+                  <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                    <span className="badge badge-dim">
+                      {typeof rowCounts[t.name] === 'number'
+                        ? rowCounts[t.name].toLocaleString()
+                        : (rowCounts[t.name] ?? '…')}
+                    </span>
+                  </td>
+                  <td>
+                    {t.resettable
+                      ? <span className="badge badge-yellow">resettable</span>
+                      : <span className="badge badge-dim">–</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export default function Database() {
   const [tables, setTables]       = useState(null)
-  const [rowCounts, setRowCounts] = useState({})  // { [name]: count | '…' }
+  const [rowCounts, setRowCounts] = useState({})
   const [loading, setLoading]     = useState(false)
   const [loadMsg, setLoadMsg]     = useState('')
   const [error, setError]         = useState('')
   const [pruneOpen, setPruneOpen] = useState(false)
+  const [query, setQuery]         = useState('')
+  const [expanded, setExpanded]   = useState(defaultGroupExpanded)
   const esRef = useRef(null)
 
   function loadDatabase() {
@@ -474,6 +568,20 @@ export default function Database() {
     return () => { if (esRef.current) { esRef.current.close() } }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  function toggleGroup(label) {
+    setExpanded(prev => ({ ...prev, [label]: !prev[label] }))
+  }
+
+  const q = query.trim().toLowerCase()
+
+  // Build groups, applying search filter
+  const groups = tables
+    ? groupTablesByDomain(tables).map(g => ({
+        ...g,
+        rows: q ? g.rows.filter(t => t.name.toLowerCase().includes(q)) : g.rows,
+      })).filter(g => g.rows.length > 0)
+    : []
+
   return (
     <>
       <div className="page-header">
@@ -500,53 +608,49 @@ export default function Database() {
         </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
         <a href="/db/download" className="btn btn-primary">↓ Download travel.db</a>
       </div>
 
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Table</th>
-                <th>Rows</th>
-                <th>Columns</th>
-                <th>Resettable</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {!tables ? (
-                <tr><td colSpan={5} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
-              ) : tables.map(t => (
-                <tr key={t.name}>
-                  <td style={{ color: 'var(--text-hi)' }}>
-                    {t.name}
-                    {t.type === 'view' && <span className="badge badge-blue" style={{ marginLeft: '6px' }}>view</span>}
-                  </td>
-                  <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
-                    {rowCounts[t.name] ?? '…'}
-                  </td>
-                  <td className="dim" style={{ fontSize: '11px', maxWidth: '320px', whiteSpace: 'normal', lineHeight: 1.8 }}>
-                    {t.cols.join(', ')}
-                  </td>
-                  <td>
-                    {t.resettable
-                      ? <span className="badge badge-yellow">yes</span>
-                      : <span className="badge badge-dim">no</span>}
-                  </td>
-                  <td>
-                    <Link to={`/db/table/${encodeURIComponent(t.name)}`} className="btn btn-ghost" style={{ padding: '4px 12px', fontSize: '11px' }}>
-                      Browse →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div style={{ marginBottom: '16px' }}>
+        <input
+          type="text"
+          placeholder="Filter tables…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{
+            background: 'var(--bg)',
+            border: '1px solid var(--border2)',
+            color: 'var(--text-hi)',
+            borderRadius: 'var(--radius)',
+            padding: '8px 12px',
+            fontFamily: 'var(--mono)',
+            fontSize: '13px',
+            width: '100%',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
       </div>
+
+      {!tables ? (
+        <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>Loading…</div>
+      ) : groups.length === 0 ? (
+        <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>No tables match.</div>
+      ) : (
+        groups.map((group, i) => (
+          <div key={group.label}>
+            <GroupSection
+              group={group}
+              rowCounts={rowCounts}
+              expanded={expanded}
+              onToggle={toggleGroup}
+              query={q}
+            />
+            {i === 0 && <div style={{ height: '16px' }} />}
+          </div>
+        ))
+      )}
 
       {/* Danger zone */}
       <div style={{ marginTop: '40px', border: '1px solid var(--red)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>

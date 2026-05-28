@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiJson } from '../api'
 
 // ── Static data ───────────────────────────────────────────────────────────────
@@ -461,6 +461,9 @@ function FeatureReadiness({ features, loading, error }) {
 // ── Section 4: ML table status ────────────────────────────────────────────────
 
 function MLTableStatus({ tables, loading, error }) {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(true)
+
   if (error) {
     return (
       <div className="card" style={{ marginBottom: '24px' }}>
@@ -471,81 +474,117 @@ function MLTableStatus({ tables, loading, error }) {
   }
 
   const rows = tables?.tables ?? []
+  const totalRows = rows.reduce((sum, t) => sum + (t.row_count || 0), 0)
 
   return (
-    <>
+    <div style={{ marginBottom: '24px' }}>
       <div style={{ marginBottom: '8px' }}>
         <span className="card-title">ML Output Tables</span>
       </div>
-      <div className="card" style={{ marginBottom: '24px' }}>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Table</th>
-                <th>Rows</th>
-                <th>Columns</th>
-                <th>Date Range</th>
-                <th>Last Updated</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>Loading…</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>No ml_ tables found.</td></tr>
-              ) : rows.map(t => {
-                const empty = t.row_count === 0
-                return (
-                  <tr key={t.name}>
-                    <td style={{ color: 'var(--text-hi)' }}>
-                      {t.name}
-                      {t.type === 'view' && (
-                        <span className="badge badge-blue" style={{ marginLeft: '6px' }}>view</span>
-                      )}
-                    </td>
-                    <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
-                      {empty ? <span style={{ color: 'var(--text-dim)' }}>—</span> : t.row_count.toLocaleString()}
-                    </td>
-                    <td className="dim" style={{ fontSize: '11px', maxWidth: '260px', whiteSpace: 'normal', lineHeight: 1.8 }}>
-                      {t.cols.join(', ')}
-                    </td>
-                    <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
-                      {empty ? (
-                        <span style={{
-                          background: 'var(--yellow-lo)', color: 'var(--yellow)',
-                          fontSize: '10px', padding: '2px 7px', borderRadius: '3px',
-                          fontFamily: 'var(--mono)',
-                        }}>
-                          Awaiting data
-                        </span>
-                      ) : t.date_range ? (
-                        <span style={{ color: 'var(--text-dim)' }}>
-                          {t.date_range.min?.slice(0, 10)} → {t.date_range.max?.slice(0, 10)}
-                        </span>
-                      ) : '—'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
-                      {t.last_updated ? t.last_updated.slice(0, 19).replace('T', ' ') : '—'}
-                    </td>
-                    <td>
-                      <Link
-                        to={`/db/table/${encodeURIComponent(t.name)}`}
-                        className="btn btn-ghost"
-                        style={{ padding: '4px 12px', fontSize: '11px' }}
-                      >
-                        Browse →
-                      </Link>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+
+      <div>
+        <div
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '9px 16px',
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: open ? 'var(--radius) var(--radius) 0 0' : 'var(--radius)',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--text-hi)', flex: 1 }}>
+            ML
+          </span>
+          {!loading && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+              {rows.length} {rows.length === 1 ? 'table' : 'tables'}
+              {totalRows > 0 && <> · {totalRows.toLocaleString()} rows</>}
+            </span>
+          )}
+          <span style={{
+            color: 'var(--text-dim)', fontSize: '11px',
+            display: 'inline-block',
+            transition: 'transform .15s',
+            transform: open ? 'rotate(0deg)' : 'rotate(-90deg)',
+          }}>
+            ▾
+          </span>
         </div>
+
+        {open && (
+          <div style={{
+            border: '1px solid var(--border)',
+            borderTop: 'none',
+            borderRadius: '0 0 var(--radius) var(--radius)',
+            overflow: 'hidden',
+          }}>
+            <div className="table-wrap">
+              <table style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={{ paddingLeft: '24px' }}>Table</th>
+                    <th>Rows</th>
+                    <th>Columns</th>
+                    <th>Date Range</th>
+                    <th>Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={5} style={{ color: 'var(--text-dim)', paddingLeft: '24px' }}>Loading…</td></tr>
+                  ) : rows.length === 0 ? (
+                    <tr><td colSpan={5} style={{ color: 'var(--text-dim)', paddingLeft: '24px' }}>No ml_ tables found.</td></tr>
+                  ) : rows.map(t => {
+                    const empty = t.row_count === 0
+                    return (
+                      <tr
+                        key={t.name}
+                        onClick={() => navigate(`/db/table/${encodeURIComponent(t.name)}`)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <td style={{ color: 'var(--text-hi)', paddingLeft: '24px' }}>
+                          {t.name}
+                          {t.type === 'view' && (
+                            <span className="badge badge-blue" style={{ marginLeft: '6px' }}>view</span>
+                          )}
+                        </td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
+                          {empty ? <span style={{ color: 'var(--text-dim)' }}>—</span> : t.row_count.toLocaleString()}
+                        </td>
+                        <td className="dim" style={{ fontSize: '11px', maxWidth: '260px', whiteSpace: 'normal', lineHeight: 1.8 }}>
+                          {t.cols.join(', ')}
+                        </td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
+                          {empty ? (
+                            <span style={{
+                              background: 'var(--yellow-lo)', color: 'var(--yellow)',
+                              fontSize: '10px', padding: '2px 7px', borderRadius: '3px',
+                              fontFamily: 'var(--mono)',
+                            }}>
+                              Awaiting data
+                            </span>
+                          ) : t.date_range ? (
+                            <span style={{ color: 'var(--text-dim)' }}>
+                              {t.date_range.min?.slice(0, 10)} → {t.date_range.max?.slice(0, 10)}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+                          {t.last_updated ? t.last_updated.slice(0, 19).replace('T', ' ') : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
-    </>
+    </div>
   )
 }
 

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiJson } from '../api'
 import { Badge } from '../components/Badge'
 import { StatTile } from '../components/StatTile'
 import { Card } from '../components/Card'
-import { timeSince } from '../utils'
+import { timeSince, groupTablesByDomain, defaultGroupExpanded } from '../utils'
 
 const SOURCE_LABELS = {
   location_shortcuts: 'Location (Shortcuts)',
@@ -31,6 +31,80 @@ function staleVariant(ts) {
   if (hrs > 48) return 'red'
   if (hrs > 25) return 'yellow'
   return 'green'
+}
+
+function OverviewDbGroups({ tables }) {
+  const navigate = useNavigate()
+  const [expanded, setExpanded] = useState(defaultGroupExpanded)
+  const groups = groupTablesByDomain(tables)
+
+  function toggle(label) {
+    setExpanded(prev => ({ ...prev, [label]: !prev[label] }))
+  }
+
+  return (
+    <>
+      {groups.map(group => {
+        const isOpen = expanded[group.label] ?? true
+        return (
+          <div key={group.label} style={{ marginBottom: '6px' }}>
+            <div
+              onClick={() => toggle(group.label)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 14px',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: isOpen ? 'var(--radius) var(--radius) 0 0' : 'var(--radius)',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+            >
+              <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', fontWeight: 600, color: 'var(--text-hi)', flex: 1 }}>
+                {group.label}
+              </span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+                {group.rows.length} {group.rows.length === 1 ? 'table' : 'tables'}
+              </span>
+              <span style={{
+                color: 'var(--text-dim)', fontSize: '11px',
+                display: 'inline-block',
+                transition: 'transform .15s',
+                transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+              }}>
+                ▾
+              </span>
+            </div>
+            {isOpen && (
+              <div style={{
+                border: '1px solid var(--border)',
+                borderTop: 'none',
+                borderRadius: '0 0 var(--radius) var(--radius)',
+                overflow: 'hidden',
+              }}>
+                <table style={{ margin: 0 }}>
+                  <tbody>
+                    {group.rows.map(t => (
+                      <tr
+                        key={t.name}
+                        onClick={() => navigate(`/db/table/${encodeURIComponent(t.name)}`)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <td style={{ paddingLeft: '24px' }}>{t.name}</td>
+                        <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>
+                          <span className="badge badge-dim">{t.count != null ? Number(t.count).toLocaleString() : '—'}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
 }
 
 export default function Overview() {
@@ -168,29 +242,12 @@ export default function Overview() {
 
       {/* DB tables */}
       <div style={{ marginBottom:'8px' }}><span className="card-title">Database Tables</span></div>
-      <Card style={{ marginBottom:'24px' }}>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Table</th><th>Rows</th><th>Resettable</th><th></th></tr></thead>
-            <tbody>
-              {!overview
-                ? <tr><td colSpan={4} className="dim">Loading…</td></tr>
-                : (overview.tables || []).map(t => (
-                    <tr key={t.name}>
-                      <td>{t.name}</td>
-                      <td>{t.count}</td>
-                      <td><Badge variant={t.resettable ? 'yellow' : 'dim'}>{t.resettable ? 'yes' : 'no'}</Badge></td>
-                      <td>
-                        <Link to={`/db/table/${t.name}`} className="btn btn-ghost"
-                              style={{ padding:'4px 10px', fontSize:'11px' }}>view</Link>
-                      </td>
-                    </tr>
-                  ))
-              }
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <div style={{ marginBottom:'24px' }}>
+        {!overview
+          ? <Card><span className="dim">Loading…</span></Card>
+          : <OverviewDbGroups tables={overview.tables || []} />
+        }
+      </div>
 
       {/* Recent log events */}
       {overview?.recent_logs?.length > 0 && (
