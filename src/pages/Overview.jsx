@@ -33,6 +33,68 @@ function staleVariant(ts) {
   return 'green'
 }
 
+function DiskRow({ label, pct, usedGb, totalGb, smart, isSsd }) {
+  const barClass = pct != null && !isNaN(pct) ? (pct > 85 ? ' danger' : pct > 70 ? ' warn' : '') : ''
+  const healthOk = smart?.health === 'PASSED'
+  const healthColor = smart?.health === 'PASSED' ? 'var(--green)' : smart?.health === 'FAILED' ? 'var(--red)' : 'var(--text-dim)'
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '3px' }}>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+          {smart ? (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: healthColor, fontWeight: 600 }}>
+              {smart.health}
+            </span>
+          ) : smart === null ? (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: 'var(--text-dim)', opacity: 0.5 }}>no SMART</span>
+          ) : null}
+          <span style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-hi)', fontWeight: 600 }}>
+            {pct != null ? `${pct}%` : '—'}
+          </span>
+        </div>
+      </div>
+      {usedGb != null && (
+        <div className="stat-sub" style={{ marginBottom: '5px' }}>{usedGb} / {totalGb} GB</div>
+      )}
+      <div className="progress-bar-bg" style={{ height: '5px', marginBottom: smart ? '5px' : 0 }}>
+        <div className={`progress-bar-fill${barClass}`} style={{ width: Math.min(pct || 0, 100) + '%' }} />
+      </div>
+      {smart && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 12px', marginTop: '4px' }}>
+          {smart.temperature_c != null && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
+              {smart.temperature_c}°C
+            </span>
+          )}
+          {smart.power_on_hours != null && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
+              {Math.round(smart.power_on_hours / 24 / 30)}mo on
+            </span>
+          )}
+          {smart.reallocated_sectors != null && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: smart.reallocated_sectors > 0 ? 'var(--yellow)' : 'var(--text-dim)' }}>
+              {smart.reallocated_sectors} realloc
+            </span>
+          )}
+          {isSsd && smart.wear_leveling_count != null && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: smart.wear_leveling_count < 10 ? 'var(--red)' : 'var(--text-dim)' }}>
+              wear {smart.wear_leveling_count}
+            </span>
+          )}
+          {isSsd && smart.total_host_writes_gb != null && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '10px', color: 'var(--text-dim)' }}>
+              {smart.total_host_writes_gb >= 1000
+                ? `${(smart.total_host_writes_gb / 1000).toFixed(1)} TB written`
+                : `${smart.total_host_writes_gb} GB written`}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OverviewDbGroups({ tables }) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(defaultGroupExpanded)
@@ -107,19 +169,35 @@ function OverviewDbGroups({ tables }) {
   )
 }
 
+const WATCHDOG_CHECK_ORDER = ['internet', 'tailscale', 'api', 'shelly', 'cloudflare', 'prefect']
+
+function formatWatchdogTime(ts) {
+  if (!ts) return null
+  const parts = ts.split(' ')
+  if (parts.length < 2) return ts
+  return parts[1].split(',')[0]
+}
+
 export default function Overview() {
   const [overview,   setOverview]   = useState(null)
   const [status,     setStatus]     = useState(null)
   const [backups,    setBackups]    = useState(null)
+  const [watchdog,   setWatchdog]   = useState(null)
   const [fetchError, setFetchError] = useState(null)
 
   useEffect(() => {
     apiJson('/api/overview').then(setOverview).catch(() => setFetchError('Failed to load overview data'))
     apiJson('/api/status').then(setStatus).catch(() => setFetchError('Failed to load status data'))
     apiJson('/api/backups').then(setBackups).catch(() => setFetchError('Failed to load backup data'))
+    apiJson('/api/watchdog/status').then(setWatchdog).catch(() => {})
+    const interval = setInterval(() => {
+      apiJson('/api/watchdog/status').then(setWatchdog).catch(() => {})
+    }, 60000)
+    return () => clearInterval(interval)
   }, [])
 
-  const h = overview?.health || {}
+  const h  = overview?.health    || {}
+  const sd = overview?.smart_data        // null = file missing, object = data present
   const now = overview?.now ? new Date(overview.now) : new Date()
   const nowStr = now.toLocaleDateString('en-GB', { weekday:'long', day:'2-digit', month:'short', year:'numeric' })
                + ', ' + now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }) + ' UTC'
@@ -145,9 +223,20 @@ export default function Overview() {
         <StatTile label="RAM"        value={formatPct(h.ram_pct)}
                   sub={h.ram_used_gb != null ? `${h.ram_used_gb} / ${h.ram_total_gb} GB` : undefined}
                   pct={h.ram_pct} />
-        <StatTile label="Disk (data)" value={formatPct(h.disk_pct)}
-                  sub={h.disk_used_gb != null ? `${h.disk_used_gb} / ${h.disk_total_gb} GB` : undefined}
-                  pct={h.disk_pct} />
+        <div className="stat">
+          <div className="stat-label">Disk</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+            <DiskRow label="SSD"
+                     pct={overview?.ssd_disk?.pct} usedGb={overview?.ssd_disk?.used_gb} totalGb={overview?.ssd_disk?.total_gb}
+                     smart={sd ? sd.ssd : (sd === null ? null : undefined)}
+                     isSsd={true} />
+            <div style={{ borderTop: '1px solid var(--border)', margin: '0' }} />
+            <DiskRow label="HDD"
+                     pct={overview?.hdd_disk?.pct} usedGb={overview?.hdd_disk?.used_gb} totalGb={overview?.hdd_disk?.total_gb}
+                     smart={sd ? sd.hdd : (sd === null ? null : undefined)}
+                     isSsd={false} />
+          </div>
+        </div>
         {h.temps && Object.keys(h.temps).length > 0
           ? Object.entries(h.temps).map(([label, temp]) => (
               <StatTile key={label} label={label}
@@ -157,6 +246,65 @@ export default function Overview() {
           : <StatTile label="Temperature" value={<span className="dim" style={{ fontSize:'16px' }}>N/A</span>} sub='' />
         }
       </div>
+
+      {/* Watchdog */}
+      {(() => {
+        const checks  = watchdog?.checks || {}
+        const hasData = Object.keys(checks).length > 0
+        const timeStr = formatWatchdogTime(watchdog?.timestamp)
+        const ordered = [
+          ...WATCHDOG_CHECK_ORDER.filter(k => k in checks),
+          ...Object.keys(checks).filter(k => !WATCHDOG_CHECK_ORDER.includes(k)),
+        ]
+        return (
+          <>
+            <style>{`
+              @keyframes wd-pulse {
+                0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+                50%       { opacity: .7; box-shadow: 0 0 0 5px transparent; }
+              }
+              .wd-dot { animation: wd-pulse 4.8s ease-in-out infinite; }
+            `}</style>
+            <div style={{ marginBottom: '8px' }}><span className="card-title">Watchdog</span></div>
+            <Card style={{ marginBottom: '24px' }}>
+              {!hasData ? (
+                <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
+                  Unavailable
+                </span>
+              ) : (
+                <>
+                {timeStr && (
+                  <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '16px' }}>
+                    Last check: {timeStr}
+                  </div>
+                )}
+                <div style={{ display: 'flex' }}>
+                  {ordered.map(key => {
+                    const check = checks[key]
+                    const color = check.ok ? 'var(--green)' : 'var(--red)'
+                    return (
+                      <div
+                        key={key}
+                        title={check.detail || ''}
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'default' }}
+                      >
+                        <div className="wd-dot" style={{
+                          width: '12px', height: '12px', borderRadius: '50%',
+                          background: color, color,
+                        }} />
+                        <span style={{ fontFamily: 'var(--mono)', fontSize: '9px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.03em' }}>
+                          {key}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                </>
+              )}
+            </Card>
+          </>
+        )
+      })()}
 
       {/* API Usage */}
       {overview?.api_usage && Object.keys(overview.api_usage).length > 0 && (

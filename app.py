@@ -49,9 +49,11 @@ FASTAPI_API_KEY    = os.environ.get("FASTAPI_API_KEY", "")
 DOCKER_CONTAINER   = os.environ.get("DOCKER_CONTAINER_NAME", "travelnet-api")
 TREVOR_CONTAINER   = os.environ.get("TREVOR_CONTAINER_NAME", "trevor")
 TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
+WATCHDOG_IP        = os.environ.get("WATCHDOG_IP", "")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186ff8.ts.net:4200/api")
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
+SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
 
 
 # Tables that can be reset from the dashboard (safelist)
@@ -177,7 +179,13 @@ def spa(path):
 @login_required
 def overview_api():
     """JSON equivalent of the index() template context — used by the React Overview page."""
-    disk = shutil.disk_usage("/data")
+    ssd_usage = shutil.disk_usage("/data")
+    hdd_usage = None
+    try:
+        hdd_usage = shutil.disk_usage("/data/backups")
+    except Exception:
+        pass
+
     cpu  = psutil.cpu_percent(interval=None)
     ram  = psutil.virtual_memory()
     temps = {}
@@ -188,15 +196,30 @@ def overview_api():
     except Exception:
         pass
 
+    smart_data = None
+    try:
+        with open(SMART_DATA_PATH) as _f:
+            smart_data = json.load(_f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    ssd_disk = {
+        "used_gb":  round(ssd_usage.used  / 1e9, 2),
+        "total_gb": round(ssd_usage.total / 1e9, 2),
+        "pct":      round(ssd_usage.used / ssd_usage.total * 100, 1),
+    }
+    hdd_disk = {
+        "used_gb":  round(hdd_usage.used  / 1e9, 2),
+        "total_gb": round(hdd_usage.total / 1e9, 2),
+        "pct":      round(hdd_usage.used / hdd_usage.total * 100, 1),
+    } if hdd_usage else None
+
     health = {
-        "disk_used_gb":  round(disk.used  / 1e9, 2),
-        "disk_total_gb": round(disk.total / 1e9, 2),
-        "disk_pct":      round(disk.used / disk.total * 100, 1),
-        "cpu_pct":       cpu,
-        "ram_used_gb":   round(ram.used  / 1e9, 2),
-        "ram_total_gb":  round(ram.total / 1e9, 2),
-        "ram_pct":       ram.percent,
-        "temps":         temps,
+        "cpu_pct":           cpu,
+        "ram_used_gb":       round(ram.used  / 1e9, 2),
+        "ram_total_gb":      round(ram.total / 1e9, 2),
+        "ram_pct":           ram.percent,
+        "temps":             temps,
     }
 
     tables = []
@@ -233,6 +256,9 @@ def overview_api():
 
     return jsonify({
         "health":      health,
+        "ssd_disk":    ssd_disk,
+        "hdd_disk":    hdd_disk,
+        "smart_data":  smart_data,
         "tables":      tables,
         "api_usage":   api_usage,
         "recent_logs": recent_logs,
@@ -1106,6 +1132,38 @@ def logs_config():
         "trevor_container": TREVOR_CONTAINER,
         "default_lines":    200,
     })
+
+
+@app.route("/api/watchdog/logs")
+@login_required
+def watchdog_logs():
+    lines = request.args.get("lines", 200)
+    if not WATCHDOG_IP:
+        return jsonify({"error": "Watchdog host not configured", "lines": []})
+    try:
+        resp = requests.get(
+            f"http://{WATCHDOG_IP}:9001/logs/watchdog",
+            params={"lines": lines},
+            timeout=5,
+        )
+        return jsonify(resp.json())
+    except Exception:
+        return jsonify({"error": "Watchdog unavailable", "lines": []})
+
+
+@app.route("/api/watchdog/status")
+@login_required
+def watchdog_status():
+    if not WATCHDOG_IP:
+        return jsonify({"error": "not configured", "checks": {}})
+    try:
+        resp = requests.get(
+            f"http://{WATCHDOG_IP}:9001/status",
+            timeout=5,
+        )
+        return jsonify(resp.json())
+    except Exception:
+        return jsonify({"error": "Watchdog unavailable", "checks": {}})
 
 
 @app.route("/logs/stream")

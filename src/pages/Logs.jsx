@@ -53,6 +53,8 @@ function LogLine({ text, level }) {
   )
 }
 
+const WATCHDOG = 'watchdog'
+
 export default function Logs() {
   const [config, setConfig]           = useState(null)
   const [configError, setConfigError] = useState(null)
@@ -63,9 +65,17 @@ export default function Logs() {
   const [minRank, setMinRank]         = useState(20)
   const [autoScroll, setAutoScroll]   = useState(true)
   const [linesCount, setLinesCount]   = useState(200)
+  const [watchdogError, setWatchdogError]       = useState(null)
+  const [watchdogLastFetch, setWatchdogLastFetch] = useState(null)
 
-  const esRef      = useRef(null)
-  const outputRef  = useRef(null)
+  const esRef           = useRef(null)
+  const pollRef         = useRef(null)
+  const outputRef       = useRef(null)
+  const activeRef       = useRef(null)
+  const linesCountRef   = useRef(linesCount)
+
+  useEffect(() => { linesCountRef.current = linesCount }, [linesCount])
+  useEffect(() => { activeRef.current = activeContainer }, [activeContainer])
 
   useEffect(() => {
     apiJson('/api/logs/config').then(d => {
@@ -81,6 +91,13 @@ export default function Logs() {
     }
   }, [lines, autoScroll])
 
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
+
   const disconnect = useCallback(() => {
     if (esRef.current) {
       esRef.current.close()
@@ -90,7 +107,39 @@ export default function Logs() {
     setStatus('disconnected')
   }, [])
 
+  const fetchWatchdog = useCallback(async () => {
+    try {
+      const data = await apiJson(`/api/watchdog/logs?lines=${linesCountRef.current}`)
+      if (activeRef.current !== WATCHDOG) return
+      if (data.error) {
+        setWatchdogError(data.error)
+        setLines([])
+      } else {
+        setWatchdogError(null)
+        setLines((data.lines ?? []).map(text => ({ text, level: levelForLine(text) })))
+        const now = new Date()
+        setWatchdogLastFetch(
+          now.toTimeString().slice(0, 8)
+        )
+      }
+    } catch {
+      if (activeRef.current !== WATCHDOG) return
+      setWatchdogError('Watchdog unavailable')
+      setLines([])
+    }
+  }, [])
+
+  const startWatchdogPoll = useCallback(() => {
+    disconnect()
+    setLines([])
+    setWatchdogError(null)
+    setWatchdogLastFetch(null)
+    fetchWatchdog()
+    pollRef.current = setInterval(fetchWatchdog, 5000)
+  }, [disconnect, fetchWatchdog])
+
   const connect = useCallback(() => {
+    stopPoll()
     disconnect()
     setLines([])
     setStatus('connected')
@@ -113,35 +162,54 @@ export default function Logs() {
       es.close()
       esRef.current = null
     }
-  }, [activeContainer, linesCount, disconnect])
+  }, [activeContainer, linesCount, disconnect, stopPoll])
 
-  // Reconnect if already streaming when container changes
   function switchContainer(name) {
-    setActive(name)
+    setLines([])
+    if (name === WATCHDOG) {
+      setActive(WATCHDOG)
+    } else {
+      stopPoll()
+      setActive(name)
+    }
   }
 
-  // When activeContainer changes and we're connected, reconnect
+  // When activeContainer changes: connect SSE or start watchdog poll
   useEffect(() => {
-    if (connected && activeContainer) {
+    if (!activeContainer) return
+    if (activeContainer === WATCHDOG) {
+      startWatchdogPoll()
+    } else {
       connect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeContainer])
 
   useEffect(() => {
-    return () => { disconnect() }
-  }, [disconnect])
+    return () => {
+      disconnect()
+      stopPoll()
+    }
+  }, [disconnect, stopPoll])
 
-  const visibleLines = lines.filter(l => (LEVEL_RANK[l.level] ?? 20) >= minRank)
+  const isWatchdog = activeContainer === WATCHDOG
+  const visibleLines = isWatchdog
+    ? lines
+    : lines.filter(l => (LEVEL_RANK[l.level] ?? 20) >= minRank)
 
   return (
     <>
       <div className="page-header">
         <h1>Logs</h1>
-        <p>Live stream from{' '}
-          <code style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
-            docker logs --follow {activeContainer ?? '…'}
-          </code>
+        <p>
+          {isWatchdog
+            ? 'Polling Watchdog Pi every 5 seconds'
+            : <>Live stream from{' '}
+                <code style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                  docker logs --follow {activeContainer ?? '…'}
+                </code>
+              </>
+          }
         </p>
       </div>
 
@@ -162,6 +230,10 @@ export default function Logs() {
             className={'svc-btn' + (activeContainer === config?.trevor_container ? ' active' : '')}
             onClick={() => switchContainer(config?.trevor_container)}
           >Trevor</button>
+          <button
+            className={'svc-btn' + (activeContainer === WATCHDOG ? ' active' : '')}
+            onClick={() => switchContainer(WATCHDOG)}
+          >Watchdog</button>
         </div>
 
         {/* Lines input */}
@@ -174,28 +246,38 @@ export default function Logs() {
           style={{ width: 'auto', minWidth: '80px' }}
         />
 
-        {/* Level filter */}
-        <div className="level-filter">
-          {LEVEL_BTNS.map(({ label, rank }) => (
-            <button
-              key={rank}
-              className={'level-btn' + (minRank === rank ? ' active' : '')}
-              onClick={() => setMinRank(rank)}
-            >{label}</button>
-          ))}
-        </div>
+        {/* Level filter — hidden for Watchdog */}
+        {!isWatchdog && (
+          <div className="level-filter">
+            {LEVEL_BTNS.map(({ label, rank }) => (
+              <button
+                key={rank}
+                className={'level-btn' + (minRank === rank ? ' active' : '')}
+                onClick={() => setMinRank(rank)}
+              >{label}</button>
+            ))}
+          </div>
+        )}
 
         {/* Status + controls */}
         <div className="log-controls">
-          <span>
-            <span className={'status-dot ' + status} />
+          {isWatchdog ? (
             <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+              {watchdogLastFetch ? `Last fetched: ${watchdogLastFetch}` : 'Fetching…'}
             </span>
-          </span>
-          <button className="btn btn-primary" onClick={connect}>
-            {connected ? 'Reconnect' : 'Connect'}
-          </button>
+          ) : (
+            <>
+              <span>
+                <span className={'status-dot ' + status} />
+                <span style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
+                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                </span>
+              </span>
+              <button className="btn btn-primary" onClick={connect}>
+                {connected ? 'Reconnect' : 'Connect'}
+              </button>
+            </>
+          )}
           <button className="btn btn-ghost" onClick={() => setLines([])}>Clear</button>
           <button
             className="btn btn-ghost"
@@ -210,15 +292,21 @@ export default function Logs() {
       </div>
 
       <div className="log-output" ref={outputRef}>
-        {visibleLines.length === 0
-          ? <span style={{ color: 'var(--text-dim)' }}>
-              {connected ? '(waiting for log lines…)' : '(Press Connect to stream logs)'}
+        {isWatchdog && watchdogError
+          ? <span style={{ color: 'var(--red)', fontFamily: 'var(--mono)', fontSize: '12px' }}>
+              {watchdogError}
             </span>
-          : visibleLines.map((l, i) => (
-              <div key={i} data-level={l.level}>
-                <LogLine text={l.text} level={l.level} />
-              </div>
-            ))
+          : visibleLines.length === 0
+            ? <span style={{ color: 'var(--text-dim)' }}>
+                {isWatchdog
+                  ? '(waiting for Watchdog logs…)'
+                  : connected ? '(waiting for log lines…)' : '(Press Connect to stream logs)'}
+              </span>
+            : visibleLines.map((l, i) => (
+                <div key={i} data-level={l.level}>
+                  <LogLine text={l.text} level={l.level} />
+                </div>
+              ))
         }
       </div>
     </>
