@@ -18,6 +18,7 @@ from flask_cors import CORS #type: ignore
 
 import logging
 import re
+import yaml
 
 class SilenceGetRequests(logging.Filter):
     def filter(self, record):
@@ -54,6 +55,7 @@ TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186ff8.ts.net:4200/api")
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
+TRAVEL_YML_PATH    = os.environ.get("TRAVEL_YML_PATH",  "/travel.yml")
 
 
 # Tables that can be reset from the dashboard (safelist)
@@ -1210,44 +1212,9 @@ def logs_stream():
 
 
 
-@app.route("/upload/revolut", methods=["POST"])
-@login_required
-def upload_revolut():
-    f = request.files.get("file")
-    if not f:
-        return jsonify({"error": "No file selected"}), 400
-    try:
-        resp = requests.post(
-            f"{FASTAPI_URL}/transactions/revolut",
-            files={"file": (f.filename, f.stream, f.content_type)},
-            headers={k: v for k, v in fastapi_headers().items() if k != "Content-Type"},
-            timeout=30,
-        )
-        if resp.ok:
-            return jsonify({"ok": True, "result": resp.json()})
-        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 503
-
-
-@app.route("/upload/wise", methods=["POST"])
-@login_required
-def upload_wise():
-    f = request.files.get("file")
-    if not f:
-        return jsonify({"error": "No file selected"}), 400
-    try:
-        resp = requests.post(
-            f"{FASTAPI_URL}/transactions/wise",
-            files={"file": (f.filename, f.stream, f.content_type)},
-            headers={k: v for k, v in fastapi_headers().items() if k != "Content-Type"},
-            timeout=30,
-        )
-        if resp.ok:
-            return jsonify({"ok": True, "result": resp.json()})
-        return jsonify({"error": f"FastAPI error {resp.status_code}: {resp.text}"}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 503
+# /upload/revolut and /upload/wise were removed when the Upload page was
+# refactored into the Tools page. These endpoints are now handled by the
+# iOS share sheet, so the manual upload UI and its backing routes are gone.
 
 
 @app.route("/upload/flight", methods=["POST"])
@@ -1587,10 +1554,82 @@ def config_delete(key):
         return jsonify({"error": str(e)}), 503
 
 
+# ── Travel YAML ───────────────────────────────────────────────────────────────
+
+_TRAVEL_YML_REQUIRED_KEYS = ("meta", "legs", "map_route", "links")
+
+
+@app.route("/api/travel-yml", methods=["GET"])
+@login_required
+def travel_yml_get():
+    if not os.path.isfile(TRAVEL_YML_PATH):
+        return jsonify({"error": f"File not found: {TRAVEL_YML_PATH}"}), 404
+    try:
+        with open(TRAVEL_YML_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+        mtime = os.path.getmtime(TRAVEL_YML_PATH)
+        last_modified = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        return jsonify({"content": content, "last_modified": last_modified})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/travel-yml", methods=["POST"])
+@login_required
+def travel_yml_post():
+    data = request.get_json(silent=True) or {}
+    content = data.get("content", "")
+
+    try:
+        parsed = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        return jsonify({"error": f"Invalid YAML: {e}"}), 400
+
+    if not isinstance(parsed, dict):
+        return jsonify({"error": "YAML must be a mapping at the top level"}), 400
+
+    for key in _TRAVEL_YML_REQUIRED_KEYS:
+        if key not in parsed:
+            return jsonify({"error": f"Missing required key: {key}"}), 400
+
+    meta = parsed.get("meta") or {}
+    trip_start = meta.get("trip_start")
+    if not trip_start:
+        return jsonify({"error": "meta.trip_start is required"}), 400
+    try:
+        datetime.strptime(str(trip_start), "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": f"meta.trip_start must be YYYY-MM-DD, got: {trip_start!r}"}), 400
+
+    legs = parsed.get("legs") or []
+    for i, leg in enumerate(legs):
+        if not isinstance(leg, dict):
+            return jsonify({"error": f"legs[{i}]: must be a mapping"}), 400
+        for field in ("id", "name"):
+            if not leg.get(field):
+                return jsonify({"error": f"legs[{i}]: missing {field}"}), 400
+        planned = leg.get("planned") or {}
+        if not planned.get("arrival"):
+            return jsonify({"error": f"legs[{i}]: missing planned.arrival"}), 400
+
+    # Write directly to the bind-mounted file. os.replace() (rename) cannot be
+    # used here because Docker file-level bind mounts pin the target inode —
+    # the kernel rejects any rename onto it with EBUSY.
+    try:
+        with open(TRAVEL_YML_PATH, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        return jsonify({"error": f"Write failed: {e}"}), 500
+
+    mtime = os.path.getmtime(TRAVEL_YML_PATH)
+    last_modified = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    return jsonify({"ok": True, "last_modified": last_modified})
+
+
 @app.route("/api/restart", methods=["POST"])
 @login_required
 def restart_server():
-    RESTARTABLE = {DOCKER_CONTAINER, "travelnet-dashboard"}
+    RESTARTABLE = {DOCKER_CONTAINER, TREVOR_CONTAINER, "travelnet-dashboard"}
     data = request.get_json(silent=True) or {}
     container = data.get("container", DOCKER_CONTAINER)
     if container not in RESTARTABLE:
