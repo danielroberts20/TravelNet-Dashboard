@@ -9,7 +9,7 @@ import Schedule         from './pages/Schedule'
 import Logs             from './pages/Logs'
 import Backups          from './pages/Backups'
 import Location         from './pages/Location'
-import Upload           from './pages/Upload'
+import Tools            from './pages/Tools'
 import Config           from './pages/Config'
 import Trevor           from './pages/Trevor'
 import Codex           from './pages/Codex'
@@ -30,7 +30,7 @@ export default function App() {
           <Route path="/logs"            element={<Logs />} />
           <Route path="/backups"         element={<Backups />} />
           <Route path="/location"        element={<Location />} />
-          <Route path="/upload"          element={<Upload />} />
+          <Route path="/tools"           element={<Tools />} />
           <Route path="/config"          element={<Config />} />
           <Route path="/trevor"          element={<Trevor />} />
           <Route path="/codex"           element={<Codex />} />

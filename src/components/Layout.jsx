@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useSidebarStats } from '../hooks/useSidebarStats'
-import { useToast } from './Toast'
-import { apiFetch, API_BASE } from '../api'
+import { useRestartContainer } from '../hooks/useRestartContainer'
+import { API_BASE } from '../api'
 import { useBackend } from '../contexts/BackendContext'
 import { BackendOffline } from './BackendOffline'
 
@@ -13,7 +13,7 @@ const NAV_LINKS = [
   { to: '/logs',    icon: '≡', label: 'Logs' },
   { to: '/backups', icon: '⊙', label: 'Backups' },
   { to: '/location',icon: '◎', label: 'Location' },
-  { to: '/upload',  icon: '↑', label: 'Upload' },
+  { to: '/tools',   icon: '↑', label: 'Tools' },
   { to: '/config',  icon: '⚙', label: 'Config' },
   { to: '/trevor',  icon: '◉', label: 'Trevor' },
   { to: '/codex',   icon: '◧', label: 'Codex' },
@@ -24,9 +24,9 @@ const NAV_LINKS = [
 export function Layout() {
   const [navOpen, setNavOpen] = useState(false)
   const [time, setTime]       = useState('')
-  const stats                 = useSidebarStats()
-  const { Toast, showToast }  = useToast()
-  const { offline, retry }    = useBackend()
+  const stats                        = useSidebarStats()
+  const { restartContainer, Toast }  = useRestartContainer()
+  const { offline, retry }           = useBackend()
 
   // UTC clock — update every 30s
   useEffect(() => {
@@ -41,26 +41,6 @@ export function Layout() {
 
   function closeNav() {
     setNavOpen(false)
-  }
-
-  async function restartContainer(name) {
-    showToast(`Restarting ${name}…`, 'var(--yellow)')
-    try {
-      const resp = await apiFetch('/api/restart', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ container: name }),
-      })
-      const d = await resp.json()
-      if (!resp.ok) throw new Error(d.error)
-      showToast(`✓ ${name} restarting…`, 'var(--green)')
-      if (name === 'travelnet-dashboard') {
-        showToast('✓ Dashboard restarting — reconnecting…', 'var(--green)')
-        setTimeout(() => window.location.reload(), 4000)
-      }
-    } catch (e) {
-      showToast(`✗ ${e.message}`, 'var(--red)')
-    }
   }
 
   async function handleLogout() {

@@ -1,110 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { Card } from '../components/Card'
 import { apiFetch } from '../api'
+import { useRestartContainer } from '../hooks/useRestartContainer'
+import { EditorView, basicSetup } from 'codemirror'
+import { yaml } from '@codemirror/lang-yaml'
+import { oneDark } from '@codemirror/theme-one-dark'
 
-function UploadZone({ id, accept, icon, label, hint, onFileChange }) {
-  const [dragover, setDragover] = useState(false)
-  const [filename, setFilename] = useState('')
-
-  function handleChange(e) {
-    const f = e.target.files[0]
-    setFilename(f ? f.name : '')
-    onFileChange(f || null)
-  }
-
-  return (
-    <div
-      style={{
-        border: `2px dashed ${dragover ? 'var(--accent)' : 'var(--border2)'}`,
-        background: dragover ? 'var(--accent-lo)' : 'transparent',
-        borderRadius: '8px', padding: '32px 24px', textAlign: 'center',
-        transition: 'border-color .2s, background .2s', cursor: 'pointer',
-        position: 'relative',
-      }}
-      onDragOver={e => { e.preventDefault(); setDragover(true) }}
-      onDragLeave={() => setDragover(false)}
-      onDrop={() => setDragover(false)}
-    >
-      <input
-        type="file" accept={accept} onChange={handleChange}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-      />
-      <div style={{ fontSize: '28px', marginBottom: '10px' }}>{icon}</div>
-      <div style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-hi)' }}>{label}</div>
-      <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '6px' }}>{hint}</div>
-      {filename && (
-        <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--accent)', marginTop: '8px' }}>
-          ✓ {filename}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function UploadCard({ title, description, accept, icon, hint, endpoint }) {
-  const [file, setFile]       = useState(null)
-  const [status, setStatus]   = useState(null)
-  const [loading, setLoading] = useState(false)
-  const formRef               = useRef()
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!file) return
-    setLoading(true)
-    setStatus(null)
-    const fd = new FormData()
-    fd.append('file', file)
-    try {
-      const resp = await apiFetch(endpoint, { method: 'POST', body: fd })
-      const d = await resp.json()
-      if (resp.ok) {
-        setStatus({ ok: true, msg: 'Upload successful: ' + JSON.stringify(d.result) })
-        setFile(null)
-        if (formRef.current) formRef.current.reset()
-      } else {
-        setStatus({ ok: false, msg: d.error || 'Upload failed' })
-      }
-    } catch (err) {
-      setStatus({ ok: false, msg: err.message })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <Card title={title}>
-      <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
-        {description}
-      </p>
-      {status && (
-        <div style={{
-          padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
-          fontFamily: 'var(--mono)', marginBottom: '14px',
-          background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
-          border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
-          color: status.ok ? 'var(--green)' : 'var(--red)',
-          wordBreak: 'break-all',
-        }}>{status.msg}</div>
-      )}
-      <form ref={formRef} onSubmit={handleSubmit}>
-        <UploadZone
-          accept={accept} icon={icon}
-          label={`Drop ${accept.replace('.', '').toUpperCase()} here or click to browse`}
-          hint={hint}
-          onFileChange={setFile}
-        />
-        <button
-          type="submit" disabled={!file || loading}
-          className="btn btn-primary"
-          style={{ marginTop: '14px', width: '100%', justifyContent: 'center',
-                   opacity: (!file || loading) ? 0.5 : 1 }}
-        >
-          {loading ? 'Uploading…' : '↑ Upload to FastAPI'}
-        </button>
-      </form>
-    </Card>
-  )
-}
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function Field({ label, children }) {
   return (
@@ -124,6 +26,22 @@ const inputStyle = {
   width: '100%', outline: 'none', colorScheme: 'dark',
 }
 
+function StatusBanner({ status }) {
+  if (!status) return null
+  return (
+    <div style={{
+      padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
+      fontFamily: 'var(--mono)', marginBottom: '14px',
+      background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
+      border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
+      color: status.ok ? 'var(--green)' : 'var(--red)',
+      wordBreak: 'break-all',
+    }}>{status.msg}</div>
+  )
+}
+
+// ── Flight form ───────────────────────────────────────────────────────────────
+
 function FlightForm() {
   const empty = {
     origin_iata: '', destination_iata: '',
@@ -141,7 +59,6 @@ function FlightForm() {
     setLoading(true)
     setStatus(null)
     const body = { ...fields }
-    // strip empty optional fields
     Object.keys(body).forEach(k => { if (!body[k]) delete body[k] })
     try {
       const resp = await apiFetch('/upload/flight', {
@@ -152,8 +69,8 @@ function FlightForm() {
       const d = await resp.json()
       if (resp.ok) {
         const r = d.result
-        const dur = r.duration_mins != null ? `${Math.floor(r.duration_mins / 60)}h ${r.duration_mins % 60}m` : ''
-        const dist = r.distance_km != null ? `${r.distance_km.toLocaleString()} km` : ''
+        const dur  = r.duration_mins != null ? `${Math.floor(r.duration_mins / 60)}h ${r.duration_mins % 60}m` : ''
+        const dist = r.distance_km   != null ? `${r.distance_km.toLocaleString()} km` : ''
         setStatus({ ok: true, msg: `Inserted — ${r.origin?.iata} → ${r.destination?.iata}  ·  ${dur}  ·  ${dist}` })
         setFields(empty)
       } else {
@@ -167,21 +84,12 @@ function FlightForm() {
   }
 
   return (
-    <Card title="Flight" style={{ marginTop: '24px' }}>
+    <Card title="Flight">
       <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
         Log a flight manually. Departure and arrival times are interpreted as local airport times —
         timezone conversion is handled server-side from airport coordinates.
       </p>
-      {status && (
-        <div style={{
-          padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
-          fontFamily: 'var(--mono)', marginBottom: '14px',
-          background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
-          border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
-          color: status.ok ? 'var(--green)' : 'var(--red)',
-          wordBreak: 'break-all',
-        }}>{status.msg}</div>
-      )}
+      <StatusBanner status={status} />
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
@@ -257,6 +165,8 @@ function FlightForm() {
   )
 }
 
+// ── Cost of Living form ───────────────────────────────────────────────────────
+
 const COUNTRY_MAP = {
   US: { country: 'United States',  currency: 'USD' },
   FJ: { country: 'Fiji',           currency: 'FJD' },
@@ -295,14 +205,14 @@ function CostOfLivingForm() {
     setStatus(null)
     const info = COUNTRY_MAP[fields.country_code]
     const body = {
-      country_code: fields.country_code,
-      country: info.country,
-      city: fields.city,
-      local_currency: info.currency,
-      source: fields.source,
-      reference_year: parseInt(fields.reference_year, 10),
-      is_estimated: fields.is_estimated,
-      notes: fields.notes || null,
+      country_code:    fields.country_code,
+      country:         info.country,
+      city:            fields.city,
+      local_currency:  info.currency,
+      source:          fields.source,
+      reference_year:  parseInt(fields.reference_year, 10),
+      is_estimated:    fields.is_estimated,
+      notes:           fields.notes || null,
     }
     for (const k of ['col_index', 'rent_index', 'col_plus_rent', 'groceries_index', 'restaurant_index', 'center_lat', 'center_lon']) {
       if (fields[k] !== '') body[k] = parseFloat(fields[k])
@@ -332,21 +242,12 @@ function CostOfLivingForm() {
   const derived = COUNTRY_MAP[fields.country_code]
 
   return (
-    <Card title="Cost of Living" style={{ marginTop: '24px' }}>
+    <Card title="Cost of Living">
       <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '18px', lineHeight: '1.5' }}>
         Log a cost of living entry for a country or city. Indices use Numbeo's NYC&nbsp;=&nbsp;100 baseline.
         Submitting a duplicate (same country + city) overwrites the existing row.
       </p>
-      {status && (
-        <div style={{
-          padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
-          fontFamily: 'var(--mono)', marginBottom: '14px',
-          background: status.ok ? 'var(--green-lo)' : 'var(--red-lo)',
-          border: `1px solid ${status.ok ? 'var(--green)' : 'var(--red)'}`,
-          color: status.ok ? 'var(--green)' : 'var(--red)',
-          wordBreak: 'break-all',
-        }}>{status.msg}</div>
-      )}
+      <StatusBanner status={status} />
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
@@ -462,69 +363,257 @@ function CostOfLivingForm() {
   )
 }
 
-export default function Upload() {
-  const [apiStatus, setApiStatus] = useState(null)
+// ── YAML editor (CodeMirror 6) ────────────────────────────────────────────────
 
-  async function checkFastAPI() {
-    setApiStatus({ checking: true })
+function YamlEditor({ editorViewRef }) {
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    const view = new EditorView({
+      doc: '',
+      extensions: [
+        basicSetup,
+        yaml(),
+        oneDark,
+        EditorView.theme({
+          '&':            { height: '500px' },
+          '.cm-scroller': { overflow: 'auto' },
+          // Suppress the default blue browser outline — the border on the
+          // container div already provides the focus indicator.
+          '&.cm-focused': { outline: 'none' },
+        }),
+      ],
+      parent: containerRef.current,
+    })
+    editorViewRef.current = view
+    return () => { view.destroy(); editorViewRef.current = null }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ border: '1px solid var(--border2)', borderRadius: '5px', overflow: 'hidden' }}
+    />
+  )
+}
+
+// ── Travel YAML tab ───────────────────────────────────────────────────────────
+
+const RESTART_CONTAINERS = [
+  { key: 'travelnet',           label: 'TravelNet API' },
+  { key: 'travelnet-dashboard', label: 'Dashboard' },
+  { key: 'trevor',              label: 'Trevor' },
+]
+
+function TravelYamlTab() {
+  const [lastModified, setLastModified] = useState(null)
+  const [loadError, setLoadError]       = useState(null)
+  const [saveStatus, setSaveStatus]     = useState(null)
+  const [saving, setSaving]             = useState(false)
+  const [selected, setSelected]         = useState({ travelnet: true, 'travelnet-dashboard': false, trevor: false })
+  const [restarting, setRestarting]     = useState(false)
+  const editorViewRef                   = useRef(null)
+  const { restartContainer, Toast }     = useRestartContainer()
+
+  async function loadYaml() {
+    setLoadError(null)
     try {
-      const resp = await apiFetch('/api/fastapi-health')
-      const d = await resp.json()
-      if (d.status === 'ok') {
-        setApiStatus({ ok: true, msg: '● Online — HTTP ' + d.code })
-      } else {
-        setApiStatus({ ok: false, msg: '● Unreachable — ' + (d.detail || 'unknown error') })
+      const resp = await apiFetch('/api/travel-yml')
+      const d    = await resp.json()
+      if (!resp.ok) { setLoadError(d.error || 'Load failed'); return }
+      setLastModified(d.last_modified)
+      const view = editorViewRef.current
+      if (view) {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: d.content } })
       }
     } catch (e) {
-      setApiStatus({ ok: false, msg: '● Error: ' + e.message })
+      setLoadError(e.message)
     }
   }
 
-  useEffect(() => { checkFastAPI() }, [])
+  // Load on mount. By the time the async fetch resolves, YamlEditor's useEffect
+  // has already run (child effects fire before parent effects), so editorViewRef
+  // is guaranteed to be set when we dispatch the content update.
+  useEffect(() => { loadYaml() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleSave() {
+    const content = editorViewRef.current?.state.doc.toString() ?? ''
+    setSaving(true)
+    setSaveStatus(null)
+    try {
+      const resp = await apiFetch('/api/travel-yml', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      })
+      const d = await resp.json()
+      if (resp.ok) {
+        setSaveStatus({ ok: true, msg: '✓ Saved successfully' })
+        setLastModified(d.last_modified)
+      } else {
+        setSaveStatus({ ok: false, msg: d.error || 'Save failed' })
+      }
+    } catch (e) {
+      setSaveStatus({ ok: false, msg: e.message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleRestart() {
+    // Restart dashboard last to avoid a mid-loop page reload.
+    const regular   = RESTART_CONTAINERS.filter(c => selected[c.key] && c.key !== 'travelnet-dashboard')
+    const dashboard = RESTART_CONTAINERS.filter(c => selected[c.key] && c.key === 'travelnet-dashboard')
+    const targets   = [...regular, ...dashboard]
+    if (!targets.length) return
+    setRestarting(true)
+    for (const { key } of targets) {
+      await restartContainer(key)
+    }
+    setRestarting(false)
+  }
+
+  function toggleContainer(key) {
+    setSelected(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const selectedCount = RESTART_CONTAINERS.filter(c => selected[c.key]).length
+
+  return (
+    <>
+      <Card title="Travel YAML">
+        {/* Header row */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+            {loadError
+              ? <span style={{ color: 'var(--red)' }}>{loadError}</span>
+              : lastModified
+                ? `Last modified: ${new Date(lastModified).toLocaleString()}`
+                : 'Loading…'}
+          </div>
+          <button className="btn btn-ghost" onClick={loadYaml} style={{ fontSize: '11px' }}>
+            Reload
+          </button>
+        </div>
+
+        <YamlEditor editorViewRef={editorViewRef} />
+
+        {saveStatus && (
+          <div style={{
+            padding: '9px 12px', borderRadius: '5px', fontSize: '12px',
+            fontFamily: 'var(--mono)', marginTop: '12px',
+            background: saveStatus.ok ? 'var(--green-lo)' : 'var(--red-lo)',
+            border: `1px solid ${saveStatus.ok ? 'var(--green)' : 'var(--red)'}`,
+            color: saveStatus.ok ? 'var(--green)' : 'var(--red)',
+            wordBreak: 'break-all',
+          }}>
+            {saveStatus.msg}
+          </div>
+        )}
+
+        <div style={{ marginTop: '14px' }}>
+          <button
+            className="btn btn-primary"
+            onClick={handleSave}
+            disabled={saving}
+            style={{ opacity: saving ? 0.5 : 1 }}
+          >
+            {saving ? 'Saving…' : '↑ Validate & Save'}
+          </button>
+        </div>
+      </Card>
+
+      <Card title="Restart Services" style={{ marginTop: '16px' }}>
+        <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '14px', lineHeight: '1.5' }}>
+          Restart containers to apply YAML changes. The ingest API re-reads travel.yml on startup.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+          {RESTART_CONTAINERS.map(({ key, label }) => (
+            <label key={key} style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-hi)', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={!!selected[key]}
+                onChange={() => toggleContainer(key)}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              {label}
+              <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>({key})</span>
+            </label>
+          ))}
+        </div>
+        <button
+          className="btn btn-primary"
+          onClick={handleRestart}
+          disabled={restarting || selectedCount === 0}
+          style={{ opacity: (restarting || selectedCount === 0) ? 0.5 : 1 }}
+        >
+          {restarting ? 'Restarting…' : `↺ Restart Selected (${selectedCount})`}
+        </button>
+
+        <div style={{
+          marginTop: '16px', padding: '10px 12px', borderRadius: '5px',
+          background: 'var(--bg)', border: '1px solid var(--border2)',
+          fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)',
+        }}>
+          ⚠ The demo site (travelnet.dev) requires a Netlify rebuild to pick up changes.
+        </div>
+      </Card>
+
+      <Toast />
+    </>
+  )
+}
+
+// ── Tab bar ───────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: 'flight', label: 'Flight Log'     },
+  { key: 'col',    label: 'Cost of Living' },
+  { key: 'yaml',   label: 'Travel YAML'   },
+]
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export default function Tools() {
+  const [tab, setTab] = useState('flight')
 
   return (
     <>
       <div className="page-header">
-        <h1>Upload</h1>
-        <p>Upload transaction exports. Files are forwarded directly to the FastAPI ingestion endpoints.</p>
+        <h1>Tools</h1>
+        <p>Log flights, update cost of living data, and edit the travel itinerary.</p>
       </div>
 
-      <div className="grid grid-2">
-        <UploadCard
-          title="Revolut CSV"
-          description="Upload a Revolut transaction export (.csv). Duplicates are ignored via source_transaction_id."
-          accept=".csv" icon="📄"
-          hint="Revolut_account_statement_*.csv"
-          endpoint="/upload/revolut"
-        />
-        <UploadCard
-          title="Wise ZIP"
-          description="Upload a Wise zip export containing per-currency/per-pot CSVs. Composite PKs handle the currency conversion ID collision."
-          accept=".zip" icon="📦"
-          hint="wise_transactions_*.zip"
-          endpoint="/upload/wise"
-        />
-      </div>
-
-      <FlightForm />
-
-      <CostOfLivingForm />
-
-      <Card title="FastAPI Status" style={{ marginTop: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{
-            fontFamily: 'var(--mono)', fontSize: '13px',
-            color: apiStatus?.ok === true  ? 'var(--green)'
-                 : apiStatus?.ok === false ? 'var(--red)'
-                 : 'var(--text-dim)',
-          }}>
-            {apiStatus?.checking ? 'Checking…' : (apiStatus?.msg ?? 'Checking…')}
-          </div>
-          <button className="btn btn-ghost" onClick={checkFastAPI} style={{ fontSize: '11px' }}>
-            Refresh
+      {/* Tab bar */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border2)', marginBottom: '24px' }}>
+        {TABS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`,
+              padding: '10px 18px',
+              marginBottom: '-1px',
+              cursor: 'pointer',
+              fontFamily: 'var(--mono)',
+              fontSize: '13px',
+              color: tab === key ? 'var(--text-hi)' : 'var(--text-dim)',
+              transition: 'color .15s, border-color .15s',
+            }}
+          >
+            {label}
           </button>
-        </div>
-      </Card>
+        ))}
+      </div>
+
+      {tab === 'flight' && <FlightForm />}
+      {tab === 'col'    && <CostOfLivingForm />}
+      {tab === 'yaml'   && <TravelYamlTab />}
     </>
   )
 }
