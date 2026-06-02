@@ -325,6 +325,15 @@ function levelVariant(lvl) {
   return 'dim'
 }
 
+// ── Tab bar ───────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { key: 'flows',     label: 'Flows'     },
+  { key: 'schedules', label: 'Schedules' },
+  { key: 'api',       label: 'API Usage' },
+  { key: 'digest',    label: 'Log Digest' },
+]
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function Schedule() {
@@ -338,6 +347,7 @@ export default function Schedule() {
   const [activeRuns,  setActiveRuns]  = useState({})
   // { dep, flowRunId } | null
   const [modal,       setModal]       = useState(null)
+  const [tab,         setTab]         = useState('flows')
 
   function loadDeployments() {
     return apiJson('/api/prefect/deployments').then(deps => {
@@ -447,163 +457,194 @@ export default function Schedule() {
         </div>
       )}
 
-      {/* Flow status cards */}
-      <div style={{ marginBottom: '8px' }}><span className="card-title">Flow Status</span></div>
-      <div className="cron-status-grid">
-        {loading
-          ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
-          : deps.map(dep => {
-              const cls  = cardClass(dep, activeRuns)
-              const bdg  = cardBadge(cls, dep, activeRuns)
-              const isRunning = triggering[dep.id] || (activeRuns[dep.id] && !activeRuns[dep.id].terminal)
-
-              return (
-                <div
-                  key={dep.id}
-                  className={`cron-card ${cls}`}
-                  onClick={() => openModal(dep)}
-                  title="Click to view last run details"
-                >
-                  <div className="cron-name">{dep.name}</div>
-                  {dep.description && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '6px', lineHeight: 1.4 }}>
-                      {dep.description}
-                    </div>
-                  )}
-                  <div style={{ marginBottom: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <Badge variant={bdg.variant}>{bdg.text}</Badge>
-                    {dep.paused && cls !== 'paused' && <Badge variant="yellow">paused</Badge>}
-                  </div>
-                  <CardMeta dep={dep} activeRuns={activeRuns} cls={cls} />
-                  <div style={{ marginTop: 'auto', paddingTop: '10px' }}>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ fontSize: '11px', padding: '3px 10px', width: '100%', justifyContent: 'center' }}
-                      disabled={isRunning || dep.paused}
-                      onClick={e => { e.stopPropagation(); triggerRun(dep) }}
-                    >
-                      {triggering[dep.id] ? 'Queuing…' : isRunning ? '⏳ Running…' : '▶ Run'}
-                    </button>
-                  </div>
-                </div>
-              )
-            })
-        }
+      {/* Tab bar */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border2)', marginBottom: '24px' }}>
+        {TABS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: `2px solid ${tab === key ? 'var(--accent)' : 'transparent'}`,
+              padding: '10px 18px',
+              marginBottom: '-1px',
+              cursor: 'pointer',
+              fontFamily: 'var(--mono)',
+              fontSize: '13px',
+              color: tab === key ? 'var(--text-hi)' : 'var(--text-dim)',
+              transition: 'color .15s, border-color .15s',
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* Schedule reference */}
-      <div style={{ marginBottom: '8px' }}><span className="card-title">Upcoming Runs</span></div>
-      <Card style={{ marginBottom: '24px' }}>
-        {loading
-          ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
-          : <>
-              {frequentDeps.length > 0 && (
-                <ScheduleSection
-                  label="Frequent"
-                  rows={frequentDeps}
-                  showNext
-                  style={{ marginBottom: dailyDeps.length > 0 || scheduledDeps.length > 0 || manualDeps.length > 0 ? '20px' : 0 }}
-                />
-              )}
-              {dailyDeps.length > 0 && (
-                <ScheduleSection
-                  label="Daily"
-                  rows={dailyDeps}
-                  showNext
-                  style={{ marginBottom: scheduledDeps.length > 0 || manualDeps.length > 0 ? '20px' : 0 }}
-                />
-              )}
-              {scheduledDeps.length > 0 && (
-                <ScheduleSection
-                  label="Scheduled"
-                  rows={scheduledDeps}
-                  showNext
-                  style={{ marginBottom: manualDeps.length > 0 ? '20px' : 0 }}
-                />
-              )}
-              {manualDeps.length > 0 && (
-                <ScheduleSection label="Manual only" rows={manualDeps} showNext={false} />
-              )}
-            </>
-        }
-      </Card>
+      {/* Tab: Flows */}
+      {tab === 'flows' && (
+        <div className="cron-status-grid">
+          {loading
+            ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
+            : deps.map(dep => {
+                const cls  = cardClass(dep, activeRuns)
+                const bdg  = cardBadge(cls, dep, activeRuns)
+                const isRunning = triggering[dep.id] || (activeRuns[dep.id] && !activeRuns[dep.id].terminal)
 
-      {/* API usage */}
-      {Object.keys(apiUsage).length > 0 && (
-        <>
-          <div style={{ marginBottom: '8px' }}><span className="card-title">API Usage</span></div>
-          <Card style={{ marginBottom: '24px' }}>
-            {Object.entries(apiUsage).map(([name, svc], i, arr) => {
-              const limit    = API_LIMITS[name] || 1
-              const pct      = Math.round(parseInt(svc.count || 0) / limit * 1000) / 10
-              const barClass = pct > 85 ? 'danger' : pct > 65 ? 'warn' : ''
-              return (
-                <div key={name} style={{ marginBottom: i < arr.length - 1 ? '16px' : 0 }}>
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '8px' }}>
-                    {name}
-                  </div>
-                  <div className="grid grid-3" style={{ marginBottom: '8px' }}>
-                    <div>
-                      <div className="stat-label">Calls this month</div>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{svc.count ?? '—'}</div>
+                return (
+                  <div
+                    key={dep.id}
+                    className={`cron-card ${cls}`}
+                    onClick={() => openModal(dep)}
+                    title="Click to view last run details"
+                  >
+                    <div className="cron-name">{dep.name}</div>
+                    {dep.description && (
+                      <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '6px', lineHeight: 1.4 }}>
+                        {dep.description}
+                      </div>
+                    )}
+                    <div style={{ marginBottom: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <Badge variant={bdg.variant}>{bdg.text}</Badge>
+                      {dep.paused && cls !== 'paused' && <Badge variant="yellow">paused</Badge>}
                     </div>
-                    <div>
-                      <div className="stat-label">Month</div>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{svc.month ?? '—'}</div>
+                    <CardMeta dep={dep} activeRuns={activeRuns} cls={cls} />
+                    <div style={{ marginTop: 'auto', paddingTop: '10px' }}>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: '11px', padding: '3px 10px', width: '100%', justifyContent: 'center' }}
+                        disabled={isRunning || dep.paused}
+                        onClick={e => { e.stopPropagation(); triggerRun(dep) }}
+                      >
+                        {triggering[dep.id] ? 'Queuing…' : isRunning ? '⏳ Running…' : '▶ Run'}
+                      </button>
                     </div>
-                    <div>
-                      <div className="stat-label">Monthly limit</div>
-                      <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{limit.toLocaleString()}</div>
-                    </div>
                   </div>
-                  <div className="progress-bar-bg" style={{ height: '6px' }}>
-                    <div className={`progress-bar-fill${barClass ? ' ' + barClass : ''}`}
-                         style={{ width: Math.min(pct, 100) + '%' }} />
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
-                    {pct}% of monthly quota used
-                  </div>
-                  {i < arr.length - 1 && (
-                    <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '8px 0 16px' }} />
-                  )}
-                </div>
-              )
-            })}
-          </Card>
-        </>
+                )
+              })
+          }
+        </div>
       )}
 
-      {/* Log digest */}
-      <div style={{ marginBottom: '8px' }}><span className="card-title">Log Digest History</span></div>
-      <Card>
-        {jobs.length === 0
-          ? <p style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>
-              No log digest entries found.
-            </p>
-          : <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Level</th><th>Logger / Job</th><th>Message</th><th>Timestamp</th></tr>
-                </thead>
-                <tbody>
-                  {jobs.map((row, i) => {
-                    const lvl = row.levelname || row.level || ''
-                    return (
-                      <tr key={row.ts || row.created || row.timestamp || i}>
-                        <td><Badge variant={levelVariant(lvl)}>{lvl || '—'}</Badge></td>
-                        <td className="dim">{row.name || row.logger || '—'}</td>
-                        <td>{(row.message || row.msg || '—').slice(0, 160)}</td>
-                        <td className="dim" style={{ whiteSpace: 'nowrap' }}>
-                          {row.ts || row.created || row.timestamp || '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-        }
-      </Card>
+      {/* Tab: Schedules */}
+      {tab === 'schedules' && (
+        <Card>
+          {loading
+            ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
+            : <>
+                {frequentDeps.length > 0 && (
+                  <ScheduleSection
+                    label="Frequent"
+                    rows={frequentDeps}
+                    showNext
+                    style={{ marginBottom: dailyDeps.length > 0 || scheduledDeps.length > 0 || manualDeps.length > 0 ? '20px' : 0 }}
+                  />
+                )}
+                {dailyDeps.length > 0 && (
+                  <ScheduleSection
+                    label="Daily"
+                    rows={dailyDeps}
+                    showNext
+                    style={{ marginBottom: scheduledDeps.length > 0 || manualDeps.length > 0 ? '20px' : 0 }}
+                  />
+                )}
+                {scheduledDeps.length > 0 && (
+                  <ScheduleSection
+                    label="Scheduled"
+                    rows={scheduledDeps}
+                    showNext
+                    style={{ marginBottom: manualDeps.length > 0 ? '20px' : 0 }}
+                  />
+                )}
+                {manualDeps.length > 0 && (
+                  <ScheduleSection label="Manual only" rows={manualDeps} showNext={false} />
+                )}
+              </>
+          }
+        </Card>
+      )}
+
+      {/* Tab: API Usage */}
+      {tab === 'api' && (
+        <Card>
+          {loading
+            ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
+            : Object.keys(apiUsage).length === 0
+              ? <p style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>No API usage data found.</p>
+              : Object.entries(apiUsage).map(([name, svc], i, arr) => {
+                  const limit    = API_LIMITS[name] || 1
+                  const pct      = Math.round(parseInt(svc.count || 0) / limit * 1000) / 10
+                  const barClass = pct > 85 ? 'danger' : pct > 65 ? 'warn' : ''
+                  return (
+                    <div key={name} style={{ marginBottom: i < arr.length - 1 ? '16px' : 0 }}>
+                      <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '8px' }}>
+                        {name}
+                      </div>
+                      <div className="grid grid-3" style={{ marginBottom: '8px' }}>
+                        <div>
+                          <div className="stat-label">Calls this month</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{svc.count ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="stat-label">Month</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{svc.month ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="stat-label">Monthly limit</div>
+                          <div style={{ fontFamily: 'var(--mono)', fontSize: '20px', color: 'var(--text-hi)' }}>{limit.toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div className="progress-bar-bg" style={{ height: '6px' }}>
+                        <div className={`progress-bar-fill${barClass ? ' ' + barClass : ''}`}
+                             style={{ width: Math.min(pct, 100) + '%' }} />
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
+                        {pct}% of monthly quota used
+                      </div>
+                      {i < arr.length - 1 && (
+                        <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '8px 0 16px' }} />
+                      )}
+                    </div>
+                  )
+                })
+          }
+        </Card>
+      )}
+
+      {/* Tab: Log Digest */}
+      {tab === 'digest' && (
+        <Card>
+          {loading
+            ? <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--text-dim)' }}>Loading…</div>
+            : jobs.length === 0
+              ? <p style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: 'var(--text-dim)' }}>
+                  No log digest entries found.
+                </p>
+              : <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Level</th><th>Logger / Job</th><th>Message</th><th>Timestamp</th></tr>
+                    </thead>
+                    <tbody>
+                      {jobs.map((row, i) => {
+                        const lvl = row.levelname || row.level || ''
+                        return (
+                          <tr key={row.ts || row.created || row.timestamp || i}>
+                            <td><Badge variant={levelVariant(lvl)}>{lvl || '—'}</Badge></td>
+                            <td className="dim">{row.name || row.logger || '—'}</td>
+                            <td>{(row.message || row.msg || '—').slice(0, 160)}</td>
+                            <td className="dim" style={{ whiteSpace: 'nowrap' }}>
+                              {row.ts || row.created || row.timestamp || '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+          }
+        </Card>
+      )}
 
       {/* Result modal */}
       {modal && (
