@@ -9,6 +9,7 @@ const LEVEL_COLORS = {
   debug:     '#00b8b8',
   info:      '#34c47c',
   critical:  '#b05ed4',
+  prefect:   '#f97316',
 }
 
 const LEVEL_BTNS = [
@@ -35,14 +36,21 @@ function levelForLine(line) {
   return 'info'
 }
 
+function MessageWithPrefect({ text }) {
+  const match = text.match(/^(.*?)(\[PREFECT\])(.*)$/)
+  if (!match) return <>{text}</>
+  return <>{match[1]}<span style={{ color: LEVEL_COLORS.prefect }}>{match[2]}</span>{match[3]}</>
+}
+
 function LogLine({ text, level }) {
   const parts = text.split('|')
   if (parts.length >= 2) {
+    const message = parts.slice(2).join(' |')
     return (
       <span className="log-line">
         {parts[0]}{'| '}
         <span style={{ color: LEVEL_COLORS[level] ?? '#a8b8d0' }}>{parts[1].trim()}</span>
-        {'|' + parts.slice(2).join('|')}
+        {' |'}<MessageWithPrefect text={message} />
       </span>
     )
   }
