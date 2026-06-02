@@ -58,31 +58,23 @@ SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
 TRAVEL_YML_PATH    = os.environ.get("TRAVEL_YML_PATH",  "/travel.yml")
 
 
+def fastapi_headers():
+    h = {"Content-Type": "application/json"}
+    if FASTAPI_API_KEY:
+        h["Authorization"] = f"Bearer {FASTAPI_API_KEY}"
+    return h
+
+
 # Tables that can be reset from the dashboard (safelist)
-RESETTABLE_TABLES = [
-    "country_transitions",
-    "cost_of_living",
-    "cron_results",
-    "daily_summary",
-    "flights",
-    "fx_rates",
-    "gap_annotations",
-    "known_places",
-    "location_noise",
-    "log_digest",
-    "ml_anomolies",
-    "ml_location_cluster_members",
-    "ml_location_clusters",
-    "ml_segments",
-    "photo_metadata",
-    "place_visits",
-    "places",
-    "transition_timezone",
-    "trigger_log",
-    "watchdog_heartbeat",
-    "weather_daily",
-    "weather_hourly"
-]
+try:
+    RESETTABLE_TABLES = requests.get(
+                f"{FASTAPI_URL}/database/resettable-tables",
+                headers=fastapi_headers(),
+                timeout=10,
+            ).json().get("tables", [])
+except Exception as e:
+    print(f"Error fetching resettable tables: {e}")
+    RESETTABLE_TABLES = []
 
 @app.route("/manifest.json")
 def manifest():
@@ -144,12 +136,6 @@ def get_db():
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
-
-def fastapi_headers():
-    h = {"Content-Type": "application/json"}
-    if FASTAPI_API_KEY:
-        h["Authorization"] = f"Bearer {FASTAPI_API_KEY}"
-    return h
 
 def table_exists(conn, name):
     row = conn.execute(
