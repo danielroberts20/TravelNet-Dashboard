@@ -86,12 +86,23 @@ function PruneModal({ open, onClose, onDone }) {
   function selectAll(val) {
     if (!meta) return
     const next = {}
-    meta.tables.forEach(t => {
-      // Cascade and pre-delete tables are not directly selectable —
-      // they follow their parents. Skip them here.
-      const isDisabled = cascadeSet.has(t) || preDeleteSet.has(t)
-      if (!isDisabled) next[t] = val
-    })
+    if (!val) {
+      // Deselect everything, including cascade/pre-delete tables that were
+      // checked automatically when their parents were selected.
+      meta.tables.forEach(t => { next[t] = false })
+    } else {
+      // Select all directly-toggleable tables and propagate to their children,
+      // mirroring what toggleTable does for individual rows.
+      meta.tables.forEach(t => {
+        const isDisabled = cascadeSet.has(t) || preDeleteSet.has(t)
+        if (!isDisabled) {
+          next[t] = true
+          Object.entries(meta.cascade_parents ?? {}).forEach(([child, parent]) => {
+            if (parent === t) next[child] = true
+          })
+        }
+      })
+    }
     setChecked(prev => ({ ...prev, ...next }))
   }
 
@@ -417,6 +428,122 @@ function PruneModal({ open, onClose, onDone }) {
   )
 }
 
+// ── Truncate modal ───────────────────────────────────────────────────────────
+
+function TruncateModal({ open, onClose, onDone, resettableTables }) {
+  const [phase, setPhase]       = useState('confirm') // confirm | result
+  const [confirmText, setConfirm] = useState('')
+  const [error, setError]       = useState('')
+  const [loading, setLoading]   = useState(false)
+  const [result, setResult]     = useState(null)
+
+  useEffect(() => {
+    if (!open) return
+    setPhase('confirm')
+    setConfirm('')
+    setError('')
+    setResult(null)
+  }, [open])
+
+  async function run() {
+    setError('')
+    setLoading(true)
+    try {
+      const resp = await apiFetch('/api/db/truncate-all', { method: 'POST' })
+      const d = await resp.json()
+      if (!resp.ok) { setError(d.error || 'Truncate failed.'); return }
+      setResult(d)
+      setPhase('result')
+    } catch (e) {
+      setError('Request failed: ' + e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="⚠ Truncate Resettable Tables" width="min(520px, 94vw)">
+
+      {phase === 'confirm' && (
+        <div>
+          <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>
+            Delete <strong style={{ color: 'var(--text)' }}>all rows</strong> from every{' '}
+            <span className="badge badge-yellow">resettable</span> table
+            ({resettableTables?.length ?? 0} tables). Useful after a migration dry-run.
+            This action cannot be undone.
+          </p>
+
+          {resettableTables && resettableTables.length > 0 && (
+            <div style={{
+              background: 'var(--bg)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)', padding: '10px 14px', marginBottom: '16px',
+              maxHeight: '160px', overflowY: 'auto',
+            }}>
+              {resettableTables.map(t => (
+                <div key={t} style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', lineHeight: '1.8' }}>{t}</div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ background: 'var(--red-lo)', border: '1px solid var(--red)', borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: '16px' }}>
+            <p style={{ fontSize: '12px', color: 'var(--red)', marginBottom: '10px' }}>
+              Type <code style={{ fontFamily: 'var(--mono)', background: 'rgba(0,0,0,.3)', padding: '1px 5px', borderRadius: '3px' }}>TRUNCATE</code> to confirm.
+            </p>
+            <input
+              type="text"
+              value={confirmText}
+              placeholder="TRUNCATE"
+              onChange={e => setConfirm(e.target.value)}
+              style={{
+                background: 'var(--bg)', border: '1px solid var(--border2)',
+                color: 'var(--text-hi)', borderRadius: 'var(--radius)',
+                padding: '7px 12px', fontFamily: 'var(--mono)', fontSize: '13px',
+                width: '100%', outline: 'none',
+              }}
+            />
+          </div>
+
+          {error && <div style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--red)', marginBottom: '14px' }}>{error}</div>}
+
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button
+              className="btn btn-danger"
+              onClick={run}
+              disabled={confirmText !== 'TRUNCATE' || loading}
+              style={{ opacity: confirmText !== 'TRUNCATE' ? 0.4 : 1, cursor: confirmText !== 'TRUNCATE' ? 'not-allowed' : 'pointer' }}
+            >
+              {loading ? 'Truncating…' : 'Truncate all'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase === 'result' && result && (
+        <div>
+          <p style={{ fontSize: '13px', color: 'var(--text-dim)', marginBottom: '16px' }}>
+            {result.count} {result.count === 1 ? 'table' : 'tables'} truncated successfully.
+          </p>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: '16px' }}>
+            <table style={{ margin: 0 }}>
+              <tbody>
+                {result.cleared.map(t => (
+                  <tr key={t}>
+                    <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--green)' }}>✓ {t}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={() => { onClose(); onDone() }}>Close &amp; Refresh</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Grouped table sections ───────────────────────────────────────────────────
 
 function GroupSection({ group, rowCounts, expanded, onToggle, query }) {
@@ -471,7 +598,12 @@ function GroupSection({ group, rowCounts, expanded, onToggle, query }) {
           overflow: 'hidden',
         }}>
           <div className="table-wrap">
-          <table style={{ margin: 0 }}>
+          <table style={{ margin: 0, width: '100%', tableLayout: 'fixed' }}>
+            <colgroup>
+              <col />
+              <col style={{ width: '110px' }} />
+              <col style={{ width: '140px' }} />
+            </colgroup>
             <tbody>
               {group.rows.map(t => (
                 <tr
@@ -485,14 +617,14 @@ function GroupSection({ group, rowCounts, expanded, onToggle, query }) {
                       <span className="badge badge-blue" style={{ marginLeft: '6px' }}>view</span>
                     )}
                   </td>
-                  <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                  <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', whiteSpace: 'nowrap', textAlign: 'right', paddingRight: '16px' }}>
                     <span className="badge badge-dim">
                       {typeof rowCounts[t.name] === 'number'
                         ? rowCounts[t.name].toLocaleString()
                         : (rowCounts[t.name] ?? '…')}
                     </span>
                   </td>
-                  <td>
+                  <td style={{ textAlign: 'right', paddingRight: '16px' }}>
                     {t.resettable
                       ? <span className="badge badge-yellow">resettable</span>
                       : <span className="badge badge-dim">–</span>}
@@ -516,7 +648,8 @@ export default function Database() {
   const [loading, setLoading]     = useState(false)
   const [loadMsg, setLoadMsg]     = useState('')
   const [error, setError]         = useState('')
-  const [pruneOpen, setPruneOpen] = useState(false)
+  const [pruneOpen, setPruneOpen]       = useState(false)
+  const [truncateOpen, setTruncateOpen] = useState(false)
   const [query, setQuery]         = useState('')
   const [expanded, setExpanded]   = useState(defaultGroupExpanded)
   const esRef = useRef(null)
@@ -675,12 +808,18 @@ export default function Database() {
                 Wipe all rows from tables marked <span className="badge badge-yellow">resettable</span> — useful after a migration dry-run.
               </div>
             </div>
-            <button className="btn btn-danger" disabled style={{ flexShrink: 0, opacity: 0.45, cursor: 'not-allowed' }}>Truncate…</button>
+            <button className="btn btn-danger" style={{ flexShrink: 0 }} onClick={() => setTruncateOpen(true)}>Truncate…</button>
           </div>
         </div>
       </div>
 
       <PruneModal open={pruneOpen} onClose={() => setPruneOpen(false)} onDone={loadDatabase} />
+      <TruncateModal
+        open={truncateOpen}
+        onClose={() => setTruncateOpen(false)}
+        onDone={loadDatabase}
+        resettableTables={tables ? tables.filter(t => t.resettable).map(t => t.name).sort() : []}
+      />
     </>
   )
 }

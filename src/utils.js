@@ -41,10 +41,10 @@ export function groupTablesByDomain(tables) {
 }
 
 // Returns the default expanded state for domain groups.
-// Daily Summary starts collapsed; everything else starts expanded.
+// Daily Summary starts expanded; everything else starts collapsed.
 export function defaultGroupExpanded() {
   const init = {}
-  DOMAIN_GROUPS.forEach(g => { init[g.label] = g.label !== 'Daily Summary' })
-  init['Other'] = true
+  DOMAIN_GROUPS.forEach(g => { init[g.label] = true })
+  init['Other'] = false
   return init
 }
