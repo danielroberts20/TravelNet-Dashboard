@@ -65,16 +65,28 @@ def fastapi_headers():
     return h
 
 
-# Tables that can be reset from the dashboard (safelist)
-try:
-    RESETTABLE_TABLES = requests.get(
-                f"{FASTAPI_URL}/database/resettable-tables",
-                headers=fastapi_headers(),
-                timeout=10,
-            ).json().get("tables", [])
-except Exception as e:
-    print(f"Error fetching resettable tables: {e}")
-    RESETTABLE_TABLES = []
+# Tables that can be reset from the dashboard (safelist).
+# Fetched lazily on first use so there is no startup race condition with the
+# ingest container. Cached permanently once a non-empty list is returned.
+_resettable_tables_cache: list | None = None
+
+def _get_resettable_tables() -> list:
+    global _resettable_tables_cache
+    if _resettable_tables_cache is not None:
+        return _resettable_tables_cache
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/database/resettable-tables",
+            headers=fastapi_headers(),
+            timeout=10,
+        )
+        tables = resp.json().get("tables", [])
+        if tables:
+            _resettable_tables_cache = tables
+            return _resettable_tables_cache
+    except Exception as e:
+        print(f"[resettable-tables] fetch failed: {e}")
+    return []
 
 @app.route("/manifest.json")
 def manifest():
@@ -221,7 +233,7 @@ def overview_api():
         for r in rows:
             tname = r["name"]
             count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
-            tables.append({"name": tname, "count": count, "resettable": tname in RESETTABLE_TABLES})
+            tables.append({"name": tname, "count": count, "resettable": tname in _get_resettable_tables()})
 
         if table_exists(conn, "api_usage"):
             for service in ["exchangerate.host", "open-meteo"]:
@@ -274,7 +286,7 @@ def db_meta_proxy():
                 "name":       tname,
                 "type":       ttype,
                 "cols":       cols,
-                "resettable": tname in RESETTABLE_TABLES,
+                "resettable": tname in _get_resettable_tables(),
             })
         conn.close()
     except Exception as e:
@@ -374,14 +386,14 @@ def db_table_api(table):
         "total_pages": total_pages,
         "order":       order,
         "direction":   direction,
-        "resettable":  table in RESETTABLE_TABLES,
+        "resettable":  table in _get_resettable_tables(),
     })
 
 @app.route("/api/db/reset/<table>", methods=["POST"])
 @login_required
 def db_reset_api(table):
     """JSON version of db_reset() — used by the React DatabaseTable page."""
-    if table not in RESETTABLE_TABLES:
+    if table not in _get_resettable_tables():
         return jsonify({"error": f"Table '{table}' is not in the reset safelist"}), 400
     try:
         resp = requests.get(
@@ -396,6 +408,23 @@ def db_reset_api(table):
     except Exception as e:
         return jsonify({"error": str(e)}), 503
 
+
+
+@app.route("/api/db/truncate-all", methods=["POST"])
+@login_required
+def db_truncate_all():
+    """Truncate all resettable tables via the ingest API."""
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/database/truncate-resettable",
+            headers=fastapi_headers(),
+            timeout=30,
+        )
+        if resp.ok:
+            return jsonify(resp.json())
+        return jsonify({"error": f"Truncate failed: {resp.status_code} {resp.text}"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
 
 
 @app.route("/db/table/<table>/download")
@@ -533,7 +562,7 @@ def prune_execute_proxy():
             f"{FASTAPI_URL}/database/prune/execute",
             headers=fastapi_headers(),
             json=data,
-            timeout=60,
+            timeout=600,
         )
         return (resp.content, resp.status_code, {"Content-Type": "application/json"})
     except Exception as e:
@@ -560,7 +589,7 @@ def ml_meta_proxy():
                 "name":       tname,
                 "type":       ttype,
                 "cols":       cols,
-                "resettable": tname in RESETTABLE_TABLES,
+                "resettable": tname in _get_resettable_tables(),
             })
         conn.close()
     except Exception as e:
@@ -608,7 +637,7 @@ def ml_tables():
                 "name":         tname,
                 "type":         ttype,
                 "cols":         cols,
-                "resettable":   tname in RESETTABLE_TABLES,
+                "resettable":   tname in _get_resettable_tables(),
                 "row_count":    row_count,
                 "date_range":   date_range,
                 "last_updated": last_updated,
