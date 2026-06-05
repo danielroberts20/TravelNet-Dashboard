@@ -640,6 +640,37 @@ td:hover { white-space: normal; word-break: break-all; }
 .status-dot.error        { background: var(--red); }
 .log-controls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .level-filter { display: flex; gap: 3px; flex-wrap: wrap; }
+.prefect-bar { display: flex; align-items: center; margin-bottom: 10px; }
+.prefect-toggle {
+  display: flex; align-items: center; gap: 5px;
+  cursor: pointer; user-select: none; margin-left: 4px;
+}
+.prefect-toggle input { display: none; }
+.prefect-toggle__track {
+  width: 26px; height: 14px;
+  background: var(--border2);
+  border-radius: 7px;
+  position: relative;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.prefect-toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 10px; height: 10px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.prefect-toggle input:checked ~ .prefect-toggle__track { background: color-mix(in srgb, #f97316 30%, transparent); }
+.prefect-toggle input:checked ~ .prefect-toggle__track::after { transform: translateX(12px); background: #f97316; }
+.prefect-toggle__label {
+  font-size: 11px; font-family: var(--mono);
+  color: var(--text-dim);
+  transition: color 0.15s;
+}
+.prefect-toggle input:checked ~ .prefect-toggle__label { color: #f97316; }
 .level-btn {
   font-size: 11px; padding: 4px 9px;
   font-family: var(--mono);
@@ -647,8 +678,9 @@ td:hover { white-space: normal; word-break: break-all; }
   background: none; border-radius: 4px;
   color: var(--text-dim); cursor: pointer;
 }
-.level-btn:hover { color: var(--text-hi); border-color: var(--text-dim); }
+.level-btn:hover:not(:disabled) { color: var(--text-hi); border-color: var(--text-dim); }
 .level-btn.active { border-color: var(--accent); color: var(--accent); }
+.level-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 @media (max-width: 600px) {
   .level-btn, .svc-btn { padding: 9px 10px; }
   .level-filter { width: 100%; justify-content: space-between; gap: 2px; }

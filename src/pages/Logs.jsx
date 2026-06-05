@@ -61,6 +61,20 @@ function LogLine({ text, level }) {
   )
 }
 
+function PrefectLogLine({ text }) {
+  const parts = text.split('|')
+  // Format: timestamp | INFO | module | [PREFECT] message  →  timestamp | PREFECT | message
+  const timestamp = parts[0] ?? ''
+  const message = parts.slice(3).join('|').trim().replace(/^\[PREFECT\]\s*/, '')
+  return (
+    <span className="log-line">
+      {timestamp}{'| '}
+      <span style={{ color: LEVEL_COLORS.prefect }}>PREFECT</span>
+      {' | '}{message}
+    </span>
+  )
+}
+
 const WATCHDOG = 'watchdog'
 
 export default function Logs() {
@@ -71,6 +85,7 @@ export default function Logs() {
   const [status, setStatus]           = useState('disconnected') // connected | disconnected | error
   const [connected, setConnected]     = useState(false)
   const [minRank, setMinRank]         = useState(20)
+  const [prefectOnly, setPrefectOnly] = useState(false)
   const [autoScroll, setAutoScroll]   = useState(true)
   const [linesCount, setLinesCount]   = useState(200)
   const [watchdogError, setWatchdogError]       = useState(null)
@@ -174,6 +189,7 @@ export default function Logs() {
 
   function switchContainer(name) {
     setLines([])
+    setPrefectOnly(false)
     if (name === WATCHDOG) {
       setActive(WATCHDOG)
     } else {
@@ -201,9 +217,17 @@ export default function Logs() {
   }, [disconnect, stopPoll])
 
   const isWatchdog = activeContainer === WATCHDOG
+  const isTravelNet = !isWatchdog && activeContainer === config?.container
   const visibleLines = isWatchdog
     ? lines
-    : lines.filter(l => (LEVEL_RANK[l.level] ?? 20) >= minRank)
+    : lines.filter(l => {
+        const hasPrefect = l.text.includes('[PREFECT]')
+        if (isTravelNet) {
+          if (prefectOnly) return hasPrefect
+          return (LEVEL_RANK[l.level] ?? 20) >= minRank && !hasPrefect
+        }
+        return (LEVEL_RANK[l.level] ?? 20) >= minRank
+      })
 
   return (
     <>
@@ -260,7 +284,8 @@ export default function Logs() {
             {LEVEL_BTNS.map(({ label, rank }) => (
               <button
                 key={rank}
-                className={'level-btn' + (minRank === rank ? ' active' : '')}
+                className={'level-btn' + (!prefectOnly && minRank === rank ? ' active' : '')}
+                disabled={prefectOnly}
                 onClick={() => setMinRank(rank)}
               >{label}</button>
             ))}
@@ -299,6 +324,20 @@ export default function Logs() {
         </div>
       </div>
 
+      {isTravelNet && (
+        <div className="prefect-bar">
+          <label className="prefect-toggle">
+            <input
+              type="checkbox"
+              checked={prefectOnly}
+              onChange={e => setPrefectOnly(e.target.checked)}
+            />
+            <span className="prefect-toggle__track" />
+            <span className="prefect-toggle__label">Prefect</span>
+          </label>
+        </div>
+      )}
+
       <div className="log-output" ref={outputRef}>
         {isWatchdog && watchdogError
           ? <span style={{ color: 'var(--red)', fontFamily: 'var(--mono)', fontSize: '12px' }}>
@@ -312,7 +351,10 @@ export default function Logs() {
               </span>
             : visibleLines.map((l, i) => (
                 <div key={i} data-level={l.level}>
-                  <LogLine text={l.text} level={l.level} />
+                  {prefectOnly
+                    ? <PrefectLogLine text={l.text} />
+                    : <LogLine text={l.text} level={l.level} />
+                  }
                 </div>
               ))
         }
