@@ -1232,7 +1232,7 @@ def logs_stream():
 # iOS share sheet, so the manual upload UI and its backing routes are gone.
 
 
-@app.route("/upload/flight", methods=["POST"])
+@app.route("/api/upload/flight", methods=["POST"])
 @login_required
 def upload_flight():
     data = request.get_json(silent=True) or {}
@@ -1250,7 +1250,7 @@ def upload_flight():
         return jsonify({"error": str(e)}), 503
 
 
-@app.route("/upload/cost_of_living", methods=["POST"])
+@app.route("/api/upload/cost_of_living", methods=["POST"])
 @login_required
 def upload_cost_of_living():
     data = request.get_json(silent=True) or {}

@@ -45,7 +45,8 @@ function StatusBanner({ status }) {
 function FlightForm() {
   const empty = {
     origin_iata: '', destination_iata: '',
-    departed_at: '', arrived_at: '',
+    departed_date: '', departed_time: '',
+    arrived_date: '', arrived_time: '',
     airline: '', flight_number: '', seat_class: '', notes: '',
   }
   const [fields, setFields] = useState(empty)
@@ -58,10 +59,15 @@ function FlightForm() {
     e.preventDefault()
     setLoading(true)
     setStatus(null)
-    const body = { ...fields }
+    const { departed_date, departed_time, arrived_date, arrived_time, ...rest } = fields
+    const body = {
+      ...rest,
+      departed_at: `${departed_date}T${departed_time}`,
+      arrived_at:  `${arrived_date}T${arrived_time}`,
+    }
     Object.keys(body).forEach(k => { if (!body[k]) delete body[k] })
     try {
-      const resp = await apiFetch('/upload/flight', {
+      const resp = await apiFetch('/api/upload/flight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -110,16 +116,28 @@ function FlightForm() {
 
           <div className="form-grid-2">
             <Field label="Departed (local) *">
-              <input type="datetime-local" style={inputStyle} value={fields.departed_at}
-                     onChange={set('departed_at')} required
-                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input type="date" style={inputStyle} value={fields.departed_date}
+                       onChange={set('departed_date')} required
+                       onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                       onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+                <input type="time" style={{ ...inputStyle, width: 'auto', flexShrink: 0 }} value={fields.departed_time}
+                       onChange={set('departed_time')} required
+                       onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                       onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+              </div>
             </Field>
             <Field label="Arrived (local) *">
-              <input type="datetime-local" style={inputStyle} value={fields.arrived_at}
-                     onChange={set('arrived_at')} required
-                     onFocus={e => e.target.style.borderColor = 'var(--accent)'}
-                     onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input type="date" style={inputStyle} value={fields.arrived_date}
+                       onChange={set('arrived_date')} required
+                       onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                       onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+                <input type="time" style={{ ...inputStyle, width: 'auto', flexShrink: 0 }} value={fields.arrived_time}
+                       onChange={set('arrived_time')} required
+                       onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                       onBlur={e => e.target.style.borderColor = 'var(--border2)'} />
+              </div>
             </Field>
           </div>
 
@@ -218,7 +236,7 @@ function CostOfLivingForm() {
       if (fields[k] !== '') body[k] = parseFloat(fields[k])
     }
     try {
-      const resp = await apiFetch('/upload/cost_of_living', {
+      const resp = await apiFetch('/api/upload/cost_of_living', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
