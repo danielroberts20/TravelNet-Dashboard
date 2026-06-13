@@ -1,201 +1,368 @@
 import { useState, useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
-import 'leaflet/dist/leaflet.css'
+import maplibregl from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { apiJson } from '../api'
 import { timeSince } from '../utils'
 
-const BLUE   = '#3d8ef0'
-const ORANGE = '#f0913d'
-const GREEN  = '#34c47c'
+const FALLBACK_STYLE = 'https://tiles.openfreemap.org/styles/bright'
+const MAPTILER_STYLE = (key) => `https://api.maptiler.com/maps/dataviz/style.json?key=${key}`
+
+const WINDOW_OPTIONS = [
+  { label: '6h',  value: 6   },
+  { label: '24h', value: 24  },
+  { label: '48h', value: 48  },
+  { label: '7d',  value: 168 },
+]
+
+const INJECTED_CSS = `
+@keyframes loc-pulse {
+  0%   { transform: translate(-50%,-50%) scale(1);   opacity: 0.8; }
+  100% { transform: translate(-50%,-50%) scale(1.8); opacity: 0; }
+}
+.loc-pulse-container { position:relative; width:20px; height:20px; pointer-events:none; }
+.loc-pulse-ring {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  width:20px; height:20px; border-radius:50%;
+  background:rgba(10,132,255,0.35);
+  animation:loc-pulse 2s ease-out infinite;
+}
+.loc-pulse-dot {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  width:12px; height:12px; border-radius:50%;
+  background:#0A84FF; border:2px solid #fff;
+  box-shadow:0 1px 4px rgba(0,0,0,0.3);
+}
+.loc-place-chip {
+  background:#fff; border:1px solid rgba(0,0,0,0.18); border-radius:10px;
+  padding:2px 8px;
+  font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  font-size:11px; color:#333; cursor:default;
+  max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  display:flex; align-items:center; min-height:20px; user-select:none;
+}
+.maplibregl-popup-content { padding:10px 12px !important; border-radius:8px !important; }
+`
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatTs(ts) {
   const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', hour12:false })
-       + ' ' + d.toLocaleDateString([], { day:'2-digit', month:'short' })
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+       + ' ' + d.toLocaleDateString([], { day: '2-digit', month: 'short' })
 }
 
-
-function toEpoch(ts) {
-  if (typeof ts === 'number') return ts
-  return new Date(ts).getTime() / 1000
+function fmtDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' })
+  } catch { return iso?.slice(0, 10) ?? '—' }
 }
 
-function FitBounds({ coords }) {
-  const map = useMap()
-  useEffect(() => {
-    if (coords.length > 0) {
-      map.fitBounds(coords, { padding: [20, 20], maxZoom: 14 })
-    }
-  }, [coords])
-  return null
+function createPulseMarker() {
+  const c = document.createElement('div')
+  c.className = 'loc-pulse-container'
+  const ring = document.createElement('div')
+  ring.className = 'loc-pulse-ring'
+  const dot = document.createElement('div')
+  dot.className = 'loc-pulse-dot'
+  c.appendChild(ring)
+  c.appendChild(dot)
+  return c
 }
+
+function createPlaceChip(place) {
+  const el = document.createElement('div')
+  el.className = 'loc-place-chip'
+  el.title = place.label || ''
+  el.textContent = place.label
+    || `~${Number(place.latitude).toFixed(2)}, ${Number(place.longitude).toFixed(2)}`
+  return el
+}
+
+function placePopupHtml(place) {
+  const label    = place.label || 'Unlabelled place'
+  const lastSeen = place.last_visited ? timeSince(place.last_visited) : 'never'
+  const lat      = Number(place.latitude).toFixed(4)
+  const lon      = Number(place.longitude).toFixed(4)
+  const dispLine = place.display_name
+    ? `<div style="color:#888;font-size:10px;margin-bottom:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${place.display_name}</div>`
+    : ''
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:12px">
+    <div style="font-weight:600;color:#111;margin-bottom:2px">${label}</div>
+    ${dispLine}
+    <div style="color:#666;margin-bottom:2px">Visits: ${place.visit_count ?? 0}</div>
+    <div style="color:#666;margin-bottom:2px">Last: ${lastSeen}</div>
+    <div style="color:#999;font-size:10px">${lat}, ${lon}</div>
+  </div>`
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Location() {
   const today = new Date().toISOString().split('T')[0]
-  const [date,    setDate]    = useState(today)
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState(null)
-  const mapRef                = useRef(null)
 
-  async function load(d) {
-    setLoading(true)
+  const [selectedDate, setSelectedDate] = useState(today)
+  const [windowHours,  setWindowHours]  = useState(24)
+  const [pointsData,   setPointsData]   = useState(null)
+  const [places,       setPlaces]       = useState([])
+  const [fetching,     setFetching]     = useState(false)
+  const [error,        setError]        = useState(null)
+  const [mapReady,     setMapReady]     = useState(false)
+  const [mapStyle,     setMapStyle]     = useState(null)
+
+  const mapContainerRef = useRef(null)
+  const mapRef          = useRef(null)
+  const pulseMarkerRef  = useRef(null)
+  const placeMarkersRef = useRef([])
+
+  // Resolve map style: use MapTiler if a key is configured, otherwise fall back to OpenFreeMap
+  useEffect(() => {
+    apiJson('/api/config/map-key')
+      .then(d => setMapStyle(d.key ? MAPTILER_STYLE(d.key) : FALLBACK_STYLE))
+      .catch(() => setMapStyle(FALLBACK_STYLE))
+  }, [])
+
+  // Initialise MapLibre once the style URL is known
+  useEffect(() => {
+    if (!mapStyle) return
+    const map = new maplibregl.Map({
+      container:          mapContainerRef.current,
+      style:              mapStyle,
+      center:             [0, 20],
+      zoom:               2,
+      attributionControl: false,
+      cooperativeGestures: false,
+    })
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right')
+    mapRef.current = map
+
+    map.on('load', () => {
+      // GeoJSON source with lineMetrics required for line-gradient
+      map.addSource('location-track', {
+        type:        'geojson',
+        data:        { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } },
+        lineMetrics: true,
+      })
+
+      // White halo gives the Apple Maps nav-line look
+      map.addLayer({
+        id:     'location-track-casing',
+        type:   'line',
+        source: 'location-track',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint:  { 'line-width': 6, 'line-color': '#ffffff', 'line-opacity': 0.6, 'line-blur': 2 },
+      })
+
+      // Main track with time-based colour gradient (old → new = indigo → blue)
+      map.addLayer({
+        id:     'location-track-line',
+        type:   'line',
+        source: 'location-track',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint:  {
+          'line-width': 3.5,
+          'line-gradient': [
+            'interpolate', ['linear'], ['line-progress'],
+            0, 'hsl(240, 60%, 55%)',
+            1, 'hsl(210, 90%, 55%)',
+          ],
+        },
+      })
+
+      setMapReady(true)
+    })
+
+    return () => {
+      if (pulseMarkerRef.current) { pulseMarkerRef.current.remove(); pulseMarkerRef.current = null }
+      placeMarkersRef.current.forEach(m => m.remove())
+      placeMarkersRef.current = []
+      map.remove()
+    }
+  }, [mapStyle]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch location points whenever date or window changes
+  useEffect(() => {
+    loadPoints()
+  }, [selectedDate, windowHours]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadPoints() {
+    setFetching(true)
     setError(null)
     try {
-      const url = d ? `/api/location-points?end_date=${d}` : '/api/location-points'
-      const res = await apiJson(url)
+      const res = await apiJson(`/api/location-points?end_date=${selectedDate}&hours=${windowHours}`)
       if (res.error) throw new Error(res.error)
-      setData(res)
+      setPointsData(res)
     } catch (e) {
       setError(e.message)
     } finally {
-      setLoading(false)
+      setFetching(false)
     }
   }
 
-  useEffect(() => { load(date) }, [])
+  // Fetch known places once on mount
+  useEffect(() => {
+    apiJson('/api/location/known-places')
+      .then(d => { if (!d.error) setPlaces(d.places || []) })
+      .catch(() => {})
+  }, [])
 
-  function handleDateChange(e) {
-    setDate(e.target.value)
-    load(e.target.value)
-  }
+  // Update track + latest-position marker when data or map readiness changes
+  // We keep the previous track visible while fetching (don't clear on setFetching)
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return
+    const map = mapRef.current
+    const points = pointsData?.points || []
+    const coords = points.map(p => [p.longitude, p.latitude])
 
-  function goToToday() {
-    setDate(today)
-    load(today)
-  }
+    const src = map.getSource('location-track')
+    if (src) {
+      src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
+    }
 
-  const overland  = data?.overland  || []
-  const shortcuts = data?.shortcuts || []
-  const allPoints = [...overland, ...shortcuts]
+    if (pulseMarkerRef.current) { pulseMarkerRef.current.remove(); pulseMarkerRef.current = null }
 
-  const latest = allPoints.length > 0
-    ? allPoints.reduce((a, b) => toEpoch(a.ts) > toEpoch(b.ts) ? a : b)
-    : null
+    if (coords.length > 0) {
+      const latest = points[points.length - 1]
+      pulseMarkerRef.current = new maplibregl.Marker({ element: createPulseMarker() })
+        .setLngLat([latest.longitude, latest.latitude])
+        .addTo(map)
 
-  const allCoords = allPoints.map(p => [p.lat, p.lon])
+      if (coords.length === 1) {
+        map.flyTo({ center: coords[0], zoom: 14, duration: 800 })
+      } else {
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c),
+          new maplibregl.LngLatBounds(coords[0], coords[0]),
+        )
+        map.fitBounds(bounds, { padding: 60, maxZoom: 16, duration: 800 })
+      }
+    }
+  }, [mapReady, pointsData])
+
+  // Add known-places markers; show only at zoom >= 8
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return
+    const map = mapRef.current
+
+    placeMarkersRef.current.forEach(m => m.remove())
+    placeMarkersRef.current = []
+
+    const markerObjs = places.map(place => {
+      const el    = createPlaceChip(place)
+      const popup = new maplibregl.Popup({ offset: 10, closeButton: false, maxWidth: '220px' })
+        .setHTML(placePopupHtml(place))
+        .setLngLat([place.longitude, place.latitude])
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([place.longitude, place.latitude])
+        .addTo(map)
+      el.addEventListener('mouseenter', () => popup.addTo(map))
+      el.addEventListener('mouseleave', () => popup.remove())
+      return { marker, popup }
+    })
+    placeMarkersRef.current = markerObjs.map(o => o.marker)
+
+    function updateVisibility() {
+      const show = map.getZoom() >= 8
+      markerObjs.forEach(({ marker }) => {
+        marker.getElement().style.display = show ? '' : 'none'
+      })
+    }
+    updateVisibility()
+    map.on('zoom', updateVisibility)
+
+    return () => {
+      map.off('zoom', updateVisibility)
+      markerObjs.forEach(({ marker, popup }) => { popup.remove(); marker.remove() })
+      placeMarkersRef.current = []
+    }
+  }, [mapReady, places])
+
+  const pts    = pointsData?.points || []
+  const latest = pts.length > 0 ? pts[pts.length - 1] : null
 
   return (
     <>
-      <div className="page-header">
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'12px' }}>
-          <div>
-            <h1>Location</h1>
-            <p>48 hours ending at selected date — Overland (blue) and Shortcuts (orange)</p>
-          </div>
-          <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
-            <input type="date" value={date} onChange={handleDateChange}
-                   style={{ background:'var(--surface)', border:'1px solid var(--border2)',
-                            color:'var(--text-hi)', borderRadius:'5px', padding:'6px 10px',
-                            fontFamily:'var(--mono)', fontSize:'12px', outline:'none', cursor:'pointer' }} />
-            <button className="btn btn-ghost" onClick={goToToday}>Today</button>
-            <button className="btn btn-ghost" onClick={() => load(date)}>↺ Refresh</button>
-          </div>
-        </div>
-      </div>
+      <style>{INJECTED_CSS}</style>
 
-      {/* Stats row */}
-      {!loading && !error && data && (
-        <div className="map-stats">
-          <div className="map-stat">
-            <span className="val">{overland.length}</span>
-            <span className="lbl">Overland points</span>
-          </div>
-          <div className="map-stat">
-            <span className="val">{shortcuts.length}</span>
-            <span className="lbl">Shortcuts points</span>
-          </div>
+      <div className="page-header" style={{ paddingBottom: '12px' }}>
+
+        {/* Title + latest point */}
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+          <h1>Location</h1>
           {latest && (
-            <>
-              <div className="map-stat">
-                <span className="val">{formatTs(latest.ts)}</span>
-                <span className="lbl">Latest point</span>
-              </div>
-              <div className="map-stat">
-                <span className="val">{timeSince(latest.ts)}</span>
-                <span className="lbl">Since last point</span>
-              </div>
-            </>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)' }}>
+              {formatTs(latest.timestamp)} · {timeSince(latest.timestamp)}
+            </span>
           )}
         </div>
-      )}
 
-      {/* Map */}
-      <div className="map-wrap">
-        {(loading || error || allPoints.length === 0) && (
-          <div className="loading-overlay">
-            {loading ? 'Loading points…'
-           : error   ? 'Error loading points: ' + error
-           : 'No points found for this date range.'}
-          </div>
-        )}
-        <MapContainer
-          center={[51.5, -0.1]} zoom={3}
-          style={{ height:'min(520px, 60vh)', borderRadius:'6px', border:'1px solid var(--border)', background:'var(--bg)' }}
-          ref={mapRef}
-        >
-          <FitBounds coords={allCoords} />
-          <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution="© OpenStreetMap contributors"
-            maxZoom={19}
+        {/* Controls row — wraps to two lines on narrow screens */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value)}
+            style={{
+              background: 'var(--surface)', border: '1px solid var(--border2)',
+              color: 'var(--text-hi)', borderRadius: '5px', padding: '6px 10px',
+              fontFamily: 'var(--mono)', fontSize: '12px', outline: 'none',
+              cursor: 'pointer', minHeight: '44px',
+            }}
           />
+          <button className="btn btn-ghost" onClick={() => setSelectedDate(today)}
+                  style={{ minHeight: '44px' }}>
+            Today
+          </button>
 
-          {/* Overland polyline */}
-          {overland.length > 1 && (
-            <Polyline positions={overland.map(p => [p.lat, p.lon])}
-                      color={BLUE} weight={2} opacity={0.5} />
-          )}
-          {overland.map((p, i) => {
-            const isLast = i === overland.length - 1
-            const tip = `Overland\n${formatTs(p.ts)}`
-                      + (p.activity ? `\nActivity: ${p.activity}` : '')
-                      + (p.speed    != null ? `\nSpeed: ${(p.speed * 3.6).toFixed(1)} km/h` : '')
-                      + (p.battery  != null ? `\nBattery: ${Math.round(p.battery * 100)}%` : '')
-            return (
-              <CircleMarker key={p.ts ?? i} center={[p.lat, p.lon]}
-                            radius={isLast ? 7 : 4}
-                            color={isLast ? GREEN : BLUE}
-                            fillColor={isLast ? GREEN : BLUE}
-                            fillOpacity={0.75} weight={1}>
-                <Tooltip direction="auto" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
-              </CircleMarker>
-            )
-          })}
+          {/* Segmented window toggle */}
+          <div style={{ display: 'flex', gap: '1px', background: 'var(--border2)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+            {WINDOW_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setWindowHours(opt.value)}
+                style={{
+                  background: windowHours === opt.value ? 'var(--accent)' : 'var(--surface)',
+                  border:     'none',
+                  color:      windowHours === opt.value ? '#fff' : 'var(--text-dim)',
+                  fontFamily: 'var(--mono)', fontSize: '12px',
+                  padding:    '0 14px', cursor: 'pointer',
+                  minHeight:  '44px',
+                  transition: 'background 0.1s, color 0.1s',
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
-          {/* Shortcuts polyline */}
-          {shortcuts.length > 1 && (
-            <Polyline positions={shortcuts.map(p => [p.lat, p.lon])}
-                      color={ORANGE} weight={2} opacity={0.5} />
-          )}
-          {shortcuts.map((p, i) => {
-            const isLast = i === shortcuts.length - 1
-            const tip = `Shortcuts\n${formatTs(p.ts)}`
-                      + (p.activity ? `\nActivity: ${p.activity}` : '')
-                      + (p.battery  != null ? `\nBattery: ${p.battery}%` : '')
-                      + (p.device   ? `\nDevice: ${p.device}` : '')
-            return (
-              <CircleMarker key={p.ts ?? i} center={[p.lat, p.lon]}
-                            radius={isLast ? 7 : 4}
-                            color={isLast ? GREEN : ORANGE}
-                            fillColor={isLast ? GREEN : ORANGE}
-                            fillOpacity={0.75} weight={1}>
-                <Tooltip direction="auto" offset={[0,-4]}><span style={{ fontFamily:'monospace', fontSize:'12px', whiteSpace:'pre' }}>{tip}</span></Tooltip>
-              </CircleMarker>
-            )
-          })}
-        </MapContainer>
+          <button className="btn btn-ghost" onClick={loadPoints}
+                  style={{ minHeight: '44px' }} title="Refresh">
+            ↺
+          </button>
+        </div>
+
+        {/* Stats strip */}
+        <div style={{
+          marginTop: '8px', fontFamily: 'var(--mono)', fontSize: '11px',
+          color: fetching ? 'var(--text-dim)' : error ? 'var(--red)' : 'var(--text-dim)',
+          overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+        }}>
+          {fetching
+            ? 'Loading…'
+            : error
+              ? `Error: ${error}`
+              : pointsData
+                ? `${pointsData.simplified_count} pts · ${windowHours}h window · ${fmtDate(pointsData.window_start)} → ${fmtDate(pointsData.window_end)}`
+                : '—'
+          }
+        </div>
       </div>
 
-      {/* Legend */}
-      <div className="map-legend">
-        <div className="legend-item"><div className="legend-dot" style={{ background:BLUE }} /> Overland</div>
-        <div className="legend-item"><div className="legend-dot" style={{ background:ORANGE }} /> Shortcuts</div>
-        <div className="legend-item"><div className="legend-line" style={{ background:BLUE, opacity:.6 }} /> Overland path</div>
-        <div className="legend-item"><div className="legend-line" style={{ background:ORANGE, opacity:.6 }} /> Shortcuts path</div>
-        <div className="legend-item" style={{ marginLeft:'auto' }}>
-          <div className="legend-dot" style={{ background:GREEN, border:'2px solid #fff' }} /> Most recent
-        </div>
+      {/* Map — fills remaining viewport height; dvh avoids iOS Safari address-bar crop */}
+      <div style={{ position: 'relative', height: 'calc(100dvh - 210px)', minHeight: '300px' }}>
+        <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
       </div>
     </>
   )

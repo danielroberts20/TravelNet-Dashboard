@@ -56,6 +56,7 @@ PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
 TRAVEL_YML_PATH    = os.environ.get("TRAVEL_YML_PATH",  "/travel.yml")
+MAPTILER_API_KEY   = os.environ.get("MAPTILER_API_KEY", "")
 
 
 def fastapi_headers():
@@ -1367,19 +1368,23 @@ def fastapi_health():
 # ── Location map ──────────────────────────────────────────────────────────────
 
 
-
 @app.route("/api/location-points")
 @login_required
 def location_points():
-    """Return 48h window of deduplicated points from location_unified view.
+    """Return location points from location_unified view for a given time window.
 
-    Optional query param: end_date=YYYY-MM-DD (defaults to now).
-    Window is always 48 hours ending at end of the specified date.
-
-    Dedup rules:
-      - Overland preferred when a Shortcuts point is within 60s and ~1km
-      - Both kept if locations differ significantly (genuine divergence)
+    Query params:
+      end_date: YYYY-MM-DD (defaults to today UTC)
+      hours:    window size — one of 6, 24, 48, 168 (default: 24)
     """
+    hours_str = request.args.get("hours", "24")
+    try:
+        hours = int(hours_str)
+    except ValueError:
+        return jsonify({"error": "hours must be an integer"}), 400
+    if hours not in (6, 24, 48, 168):
+        return jsonify({"error": "hours must be one of: 6, 24, 48, 168"}), 400
+
     end_date_str = request.args.get("end_date")
     try:
         if end_date_str:
@@ -1387,132 +1392,118 @@ def location_points():
                 hour=23, minute=59, second=59, tzinfo=timezone.utc
             )
         else:
-            end_dt = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+            end_dt = now.replace(hour=23, minute=59, second=59)
     except ValueError:
         return jsonify({"error": f"Invalid date format: {end_date_str}, use YYYY-MM-DD"}), 400
 
-    until = int(end_dt.timestamp())
-    since = until - 172800  # 48 hours
+    window_end   = end_dt
+    window_start = window_end - timedelta(hours=hours)
 
     try:
         conn = get_db()
+        if not conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='view' AND name='location_unified'"
+        ).fetchone():
+            conn.close()
+            return jsonify({"error": "location_unified view not found"}), 500
 
-        # Check view exists — fall back gracefully if migration hasn't run yet
-        view_exists = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='view' AND name='location_overland_cleaned'"
-        ).fetchone()
-
-        if view_exists:
-            rows = conn.execute("""
-                SELECT timestamp, latitude, longitude, altitude, activity,
-                       battery_level AS battery, speed, device_id AS device, horizontal_accuracy AS accuracy, 'overland' AS source
-                FROM location_overland_cleaned
-                WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
-                  AND datetime(timestamp) <= datetime(?, 'unixepoch')
-                ORDER BY timestamp ASC
-            """, (since, until)).fetchall()
-            points = [dict(r) for r in rows]
-            points = _dedup_location(points)
-        else:
-            # View not yet created — fall back to querying tables directly
-            points = _query_tables_directly(conn, since, until)
-
+        rows = conn.execute("""
+            SELECT timestamp, latitude, longitude, source, activity, speed, battery, accuracy
+            FROM location_unified
+            WHERE timestamp >= datetime(?, 'unixepoch')
+              AND timestamp <= datetime(?, 'unixepoch')
+            ORDER BY timestamp ASC
+        """, (int(window_start.timestamp()), int(window_end.timestamp()))).fetchall()
         conn.close()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Split back into sources for the map (different colours)
-    overland  = [
-        {"lat": p["latitude"], "lon": p["longitude"], "ts": p["timestamp"],
-         "activity": p["activity"], "battery": p["battery"], "speed": p["speed"]}
-        for p in points if p["source"] == "overland"
-    ]
-    shortcuts = [
-        {"lat": p["latitude"], "lon": p["longitude"], "ts": p["timestamp"],
-         "activity": p["activity"], "battery": p["battery"], "device": p.get("device")}
-        for p in points if p["source"] == "shortcuts"
-    ]
+    all_points     = [dict(r) for r in rows]
+    original_count = len(all_points)
+    simplified     = _simplify_points(all_points)
 
     return jsonify({
-        "overland":  overland,
-        "shortcuts": shortcuts,
-        "since":     since,
-        "until":     until,
-        "end_date":  end_date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "points":           simplified,
+        "count":            original_count,
+        "simplified_count": len(simplified),
+        "window_hours":     hours,
+        "window_start":     window_start.isoformat(),
+        "window_end":       window_end.isoformat(),
     })
 
 
-def _ts_to_epoch(ts) -> float:
-    """Convert ISO 8601 string or Unix int/float to epoch seconds."""
-    if isinstance(ts, (int, float)):
-        return float(ts)
-    try:
-        from datetime import datetime as dt
-        d = dt.fromisoformat(ts.replace("Z", "+00:00"))
-        return d.timestamp()
-    except Exception:
-        return 0.0
+def _simplify_points(points: list) -> list:
+    """Drop intermediate points that are < 15 m and < 30 s from the previous kept point.
 
-
-def _dedup_location(points: list, time_window: int = 60, dist_threshold: float = 0.01) -> list:
-    """Drop Shortcuts points that are within time_window seconds and
-    dist_threshold degrees of an Overland point. Keep both if far apart."""
+    Reduces payload size for dense stationary periods without losing movement detail.
+    First and last points are always kept.
+    """
     import math
 
-    overland  = [p for p in points if p["source"] == "overland"]
-    shortcuts = [p for p in points if p["source"] == "shortcuts"]
+    if len(points) <= 2:
+        return points
 
-    overland_ts = [_ts_to_epoch(p["timestamp"]) for p in overland]
+    def dist_m(a, b):
+        dlat = (b["latitude"] - a["latitude"]) * 111_000
+        avg_lat = math.radians((a["latitude"] + b["latitude"]) / 2)
+        dlon = (b["longitude"] - a["longitude"]) * 111_000 * math.cos(avg_lat)
+        return math.sqrt(dlat ** 2 + dlon ** 2)
 
-    kept_shortcuts = []
-    for pt in shortcuts:
-        pt_ts   = _ts_to_epoch(pt["timestamp"])
-        matched = False
-        for i, ots in enumerate(overland_ts):
-            if abs(pt_ts - ots) <= time_window:
-                op   = overland[i]
-                dist = math.sqrt((pt["latitude"] - op["latitude"]) ** 2 + (pt["longitude"] - op["longitude"]) ** 2)
-                if dist <= dist_threshold:
-                    matched = True
-                    break
-        if not matched:
-            kept_shortcuts.append(pt)
+    def ts_epoch(ts):
+        if isinstance(ts, (int, float)):
+            return float(ts)
+        try:
+            from datetime import datetime as _dt
+            return _dt.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
 
-    merged = overland + kept_shortcuts
-    merged.sort(key=lambda p: p["timestamp"])
-    return merged
+    kept = [points[0]]
+    for pt in points[1:-1]:
+        prev = kept[-1]
+        if dist_m(prev, pt) < 15 and abs(ts_epoch(pt["timestamp"]) - ts_epoch(prev["timestamp"])) < 30:
+            continue
+        kept.append(pt)
+    kept.append(points[-1])
+    return kept
 
 
-def _query_tables_directly(conn, since: int, until: int) -> list:
-    """Fallback: query the two tables directly if the unified view doesn't exist yet."""
-    points = []
-    if table_exists(conn, "location_overland"):
+@app.route("/api/location/known-places")
+@login_required
+def location_known_places():
+    """Return all known places with visit stats and geocoded display name."""
+    try:
+        conn = get_db()
+        if not table_exists(conn, "known_places"):
+            conn.close()
+            return jsonify({"places": []})
+
         rows = conn.execute("""
-            SELECT timestamp, latitude, longitude, altitude, activity,
-                   battery_level AS battery, speed, device_id AS device,
-                   horizontal_accuracy AS accuracy
-            FROM location_overland
-            WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
-              AND datetime(timestamp) <= datetime(?, 'unixepoch')
-            ORDER BY timestamp ASC
-        """, (since, until)).fetchall()
-        points += [{**dict(r), "source": "overland"} for r in rows]
+            SELECT
+                kp.id,
+                kp.label,
+                kp.latitude,
+                kp.longitude,
+                kp.visit_count,
+                kp.last_visited,
+                p.display_name
+            FROM known_places kp
+            LEFT JOIN places p ON kp.place_id = p.id
+            ORDER BY kp.visit_count DESC
+        """).fetchall()
+        conn.close()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    if table_exists(conn, "location_shortcuts"):
-        rows = conn.execute("""
-            SELECT datetime(timestamp, 'unixepoch') AS timestamp,
-                   latitude AS lat, longitude AS lon, altitude,
-                   activity, CAST(battery AS REAL) / 100.0 AS battery,
-                   NULL AS speed, device, NULL AS accuracy
-            FROM location_shortcuts
-            WHERE timestamp >= ? AND timestamp <= ?
-            ORDER BY timestamp ASC
-        """, (since, until)).fetchall()
-        points += [{**dict(r), "source": "shortcuts"} for r in rows]
+    return jsonify({"places": [dict(r) for r in rows]})
 
-    points.sort(key=lambda p: p["timestamp"])
-    return _dedup_location(points)
 
+@app.route("/api/config/map-key")
+@login_required
+def map_key():
+    """Return the MapTiler API key for client-side map tile requests."""
+    return jsonify({"key": MAPTILER_API_KEY})
 
 
 # ── Config ────────────────────────────────────────────────────────────────────

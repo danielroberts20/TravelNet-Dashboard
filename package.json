@@ -12,10 +12,10 @@
     "@codemirror/lang-yaml": "^6.1.2",
     "@codemirror/theme-one-dark": "^6.1.2",
     "codemirror": "^6.0.1",
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.6.0",
+    "pmtiles": "^3.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-leaflet": "^4.2.1",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.28.0",
     "remark-gfm": "^4.0.1"
