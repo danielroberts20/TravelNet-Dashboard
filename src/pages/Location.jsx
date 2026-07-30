@@ -59,6 +59,13 @@ function fmtDate(iso) {
   } catch { return iso?.slice(0, 10) ?? '—' }
 }
 
+function fmtDuration(mins) {
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
 function createPulseMarker() {
   const c = document.createElement('div')
   c.className = 'loc-pulse-container'
@@ -71,16 +78,23 @@ function createPulseMarker() {
   return c
 }
 
-function createPlaceChip(place) {
+function createPlaceChip(place, placeVisits) {
   const el = document.createElement('div')
   el.className = 'loc-place-chip'
-  el.title = place.label || ''
-  el.textContent = place.label
+  const baseLabel = place.label
     || `~${Number(place.latitude).toFixed(2)}, ${Number(place.longitude).toFixed(2)}`
+  let text = baseLabel
+  if (placeVisits && placeVisits.length === 1) {
+    text = `${baseLabel} · ${fmtDuration(placeVisits[0].duration_mins)}`
+  } else if (placeVisits && placeVisits.length > 1) {
+    text = `${baseLabel} ×${placeVisits.length}`
+  }
+  el.title = place.label || ''
+  el.textContent = text
   return el
 }
 
-function placePopupHtml(place) {
+function placePopupHtml(place, placeVisits) {
   const label    = place.label || 'Unlabelled place'
   const lastSeen = place.last_visited ? timeSince(place.last_visited) : 'never'
   const lat      = Number(place.latitude).toFixed(4)
@@ -88,12 +102,23 @@ function placePopupHtml(place) {
   const dispLine = place.display_name
     ? `<div style="color:#888;font-size:10px;margin-bottom:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${place.display_name}</div>`
     : ''
+  let visitLines = ''
+  if (placeVisits && placeVisits.length > 0) {
+    visitLines = '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px">'
+    visitLines += placeVisits.map(v => {
+      const arr = formatTs(v.arrived_at)
+      const dep = v.departed_at ? formatTs(v.departed_at) : 'ongoing'
+      return `<div style="color:#555;font-size:10px;margin-bottom:1px">${arr} → ${dep} (${fmtDuration(v.duration_mins)})</div>`
+    }).join('')
+    visitLines += '</div>'
+  }
   return `<div style="font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:12px">
     <div style="font-weight:600;color:#111;margin-bottom:2px">${label}</div>
     ${dispLine}
     <div style="color:#666;margin-bottom:2px">Visits: ${place.visit_count ?? 0}</div>
     <div style="color:#666;margin-bottom:2px">Last: ${lastSeen}</div>
     <div style="color:#999;font-size:10px">${lat}, ${lon}</div>
+    ${visitLines}
   </div>`
 }
 
@@ -218,7 +243,8 @@ export default function Location() {
 
     const src = map.getSource('location-track')
     if (src) {
-      src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords } })
+      // A LineString with < 2 coords is invalid — render empty track instead
+      src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coords.length >= 2 ? coords : [] } })
     }
 
     if (pulseMarkerRef.current) { pulseMarkerRef.current.remove(); pulseMarkerRef.current = null }
@@ -241,7 +267,7 @@ export default function Location() {
     }
   }, [mapReady, pointsData])
 
-  // Add known-places markers; show only at zoom >= 8
+  // Add known-places markers; show only at zoom >= 8; annotate with visit durations from current window
   useEffect(() => {
     if (!mapReady || !mapRef.current) return
     const map = mapRef.current
@@ -249,10 +275,17 @@ export default function Location() {
     placeMarkersRef.current.forEach(m => m.remove())
     placeMarkersRef.current = []
 
+    const visitsByPlaceId = {}
+    for (const v of pointsData?.visits || []) {
+      if (!visitsByPlaceId[v.known_place_id]) visitsByPlaceId[v.known_place_id] = []
+      visitsByPlaceId[v.known_place_id].push(v)
+    }
+
     const markerObjs = places.map(place => {
-      const el    = createPlaceChip(place)
-      const popup = new maplibregl.Popup({ offset: 10, closeButton: false, maxWidth: '220px' })
-        .setHTML(placePopupHtml(place))
+      const placeVisits = visitsByPlaceId[place.id] || null
+      const el    = createPlaceChip(place, placeVisits)
+      const popup = new maplibregl.Popup({ offset: 10, closeButton: false, maxWidth: '240px' })
+        .setHTML(placePopupHtml(place, placeVisits))
         .setLngLat([place.longitude, place.latitude])
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([place.longitude, place.latitude])
@@ -277,7 +310,7 @@ export default function Location() {
       markerObjs.forEach(({ marker, popup }) => { popup.remove(); marker.remove() })
       placeMarkersRef.current = []
     }
-  }, [mapReady, places])
+  }, [mapReady, places, pointsData])
 
   const pts    = pointsData?.points || []
   const latest = pts.length > 0 ? pts[pts.length - 1] : null
@@ -316,21 +349,14 @@ export default function Location() {
             Today
           </button>
 
-          {/* Segmented window toggle */}
-          <div style={{ display: 'flex', gap: '1px', background: 'var(--border2)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+          {/* Window toggle */}
+          <div style={{ display: 'flex', gap: '3px' }}>
             {WINDOW_OPTIONS.map(opt => (
               <button
                 key={opt.value}
+                className={'level-btn' + (windowHours === opt.value ? ' active' : '')}
                 onClick={() => setWindowHours(opt.value)}
-                style={{
-                  background: windowHours === opt.value ? 'var(--accent)' : 'var(--surface)',
-                  border:     'none',
-                  color:      windowHours === opt.value ? '#fff' : 'var(--text-dim)',
-                  fontFamily: 'var(--mono)', fontSize: '12px',
-                  padding:    '0 14px', cursor: 'pointer',
-                  minHeight:  '44px',
-                  transition: 'background 0.1s, color 0.1s',
-                }}
+                style={{ minHeight: '44px' }}
               >
                 {opt.label}
               </button>

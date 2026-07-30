@@ -1409,17 +1409,17 @@ def location_points():
 
     end_date_str = request.args.get("end_date")
     try:
+        now = datetime.now(timezone.utc)
         if end_date_str:
-            end_dt = datetime.strptime(end_date_str, "%Y-%m-%d").replace(
+            end_of_day = datetime.strptime(end_date_str, "%Y-%m-%d").replace(
                 hour=23, minute=59, second=59, tzinfo=timezone.utc
             )
         else:
-            now = datetime.now(timezone.utc)
-            end_dt = now.replace(hour=23, minute=59, second=59)
+            end_of_day = now.replace(hour=23, minute=59, second=59)
     except ValueError:
         return jsonify({"error": f"Invalid date format: {end_date_str}, use YYYY-MM-DD"}), 400
 
-    window_end   = end_dt
+    window_end   = min(end_of_day, now)
     window_start = window_end - timedelta(hours=hours)
 
     try:
@@ -1433,20 +1433,57 @@ def location_points():
         rows = conn.execute("""
             SELECT timestamp, latitude, longitude, source, activity, speed, battery, accuracy
             FROM location_unified
-            WHERE timestamp >= datetime(?, 'unixepoch')
-              AND timestamp <= datetime(?, 'unixepoch')
+            WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
+              AND datetime(timestamp) <= datetime(?, 'unixepoch')
             ORDER BY timestamp ASC
         """, (int(window_start.timestamp()), int(window_end.timestamp()))).fetchall()
+
+        visits_raw = []
+        if table_exists(conn, "place_visits") and table_exists(conn, "known_places"):
+            vrows = conn.execute("""
+                SELECT pv.id, pv.known_place_id, kp.label, kp.latitude, kp.longitude,
+                       pv.arrived_at, pv.departed_at
+                FROM place_visits_cleaned pv
+                JOIN known_places kp ON kp.id = pv.known_place_id
+                WHERE datetime(pv.arrived_at) <= datetime(?, 'unixepoch')
+                  AND (datetime(pv.departed_at) >= datetime(?, 'unixepoch') OR pv.departed_at IS NULL)
+                ORDER BY pv.arrived_at ASC
+            """, (int(window_end.timestamp()), int(window_start.timestamp()))).fetchall()
+            visits_raw = [dict(r) for r in vrows]
+
         conn.close()
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
     all_points     = [dict(r) for r in rows]
     original_count = len(all_points)
-    simplified     = _simplify_points(all_points)
+
+    all_points = _collapse_visit_points(all_points, visits_raw, window_start, window_end)
+    simplified  = _simplify_points_with_spikes(all_points)
+
+    for pt in simplified:
+        pt.pop("is_spike", None)
+
+    visits_out = []
+    for v in visits_raw:
+        arrived_dt  = _parse_iso_utc(v["arrived_at"])
+        departed_dt = _parse_iso_utc(v["departed_at"]) if v["departed_at"] else None
+        end_dt      = departed_dt or window_end
+        duration_mins = int((end_dt - arrived_dt).total_seconds() / 60)
+        visits_out.append({
+            "known_place_id": v["known_place_id"],
+            "label":          v["label"],
+            "latitude":       v["latitude"],
+            "longitude":      v["longitude"],
+            "arrived_at":     v["arrived_at"],
+            "departed_at":    v["departed_at"],
+            "duration_mins":  duration_mins,
+        })
 
     return jsonify({
         "points":           simplified,
+        "visits":           visits_out,
+        "single_point":     len(simplified) < 2,
         "count":            original_count,
         "simplified_count": len(simplified),
         "window_hours":     hours,
@@ -1455,11 +1492,96 @@ def location_points():
     })
 
 
-def _simplify_points(points: list) -> list:
-    """Drop intermediate points that are < 15 m and < 30 s from the previous kept point.
+def _parse_iso_utc(ts_str: str) -> datetime:
+    return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
 
-    Reduces payload size for dense stationary periods without losing movement detail.
-    First and last points are always kept.
+
+def _pt_epoch(ts) -> float:
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _collapse_visit_points(points: list, visits: list, window_start: datetime, window_end: datetime) -> list:
+    """Replace GPS points within each visit's time range with a single spike point at the known place."""
+    if not visits or not points:
+        return points
+
+    for visit in visits:
+        arrived_dt  = _parse_iso_utc(visit["arrived_at"])
+        departed_dt = _parse_iso_utc(visit["departed_at"]) if visit["departed_at"] else None
+
+        removal_start    = max(arrived_dt, window_start)
+        removal_end      = min(departed_dt or window_end, window_end)
+        removal_start_ts = removal_start.timestamp()
+        removal_end_ts   = removal_end.timestamp()
+
+        in_range = [
+            i for i, pt in enumerate(points)
+            if removal_start_ts <= _pt_epoch(pt["timestamp"]) <= removal_end_ts
+        ]
+        if not in_range:
+            continue
+
+        source  = points[in_range[0]].get("source")
+        mid_ts  = (removal_start_ts + removal_end_ts) / 2
+        mid_iso = datetime.fromtimestamp(mid_ts, tz=timezone.utc).isoformat()
+
+        spike = {
+            "timestamp": mid_iso,
+            "latitude":  visit["latitude"],
+            "longitude": visit["longitude"],
+            "source":    source,
+            "activity":  None,
+            "speed":     None,
+            "battery":   None,
+            "accuracy":  None,
+            "is_spike":  True,
+        }
+
+        first_idx = in_range[0]
+        last_idx  = in_range[-1]
+        points = points[:first_idx] + [spike] + points[last_idx + 1:]
+
+    return points
+
+
+def _simplify_points_with_spikes(points: list) -> list:
+    """Run DP simplification per segment, treating spike points as inviolable boundaries."""
+    spike_indices = [i for i, pt in enumerate(points) if pt.get("is_spike")]
+
+    if not spike_indices:
+        return _simplify_points(points)
+
+    segments = []
+    prev = 0
+    for idx in spike_indices:
+        segments.append(points[prev:idx])
+        prev = idx + 1
+    segments.append(points[prev:])
+
+    result = []
+    for i, seg in enumerate(segments):
+        result.extend(_simplify_points(seg))
+        if i < len(spike_indices):
+            result.append(points[spike_indices[i]])
+
+    return result
+
+
+def _simplify_points(points: list) -> list:
+    """Dedup nearby points then smooth with Douglas-Peucker.
+
+    Pass 1 (15m/30s dedup): drops points that are both very close in space
+    AND very close in time to the previous kept point — removes identical GPS
+    pings without touching genuine movement.
+
+    Pass 2 (Douglas-Peucker, ~12m tolerance): removes collinear/jitter points
+    that lie within ~12m of the straight line between their neighbours, smoothing
+    GPS drift during stationary periods. First and last points are always kept.
     """
     import math
 
@@ -1481,6 +1603,7 @@ def _simplify_points(points: list) -> list:
         except Exception:
             return 0.0
 
+    # Pass 1: 15m/30s dedup
     kept = [points[0]]
     for pt in points[1:-1]:
         prev = kept[-1]
@@ -1488,7 +1611,35 @@ def _simplify_points(points: list) -> list:
             continue
         kept.append(pt)
     kept.append(points[-1])
-    return kept
+
+    if len(kept) <= 2:
+        return kept
+
+    # Pass 2: Douglas-Peucker — ~12m ≈ 0.00011° at mid-latitudes
+    TOLERANCE = 0.00011
+
+    def perp_dist(pt, a, b):
+        x0, y0 = pt["longitude"],  pt["latitude"]
+        x1, y1 = a["longitude"],   a["latitude"]
+        x2, y2 = b["longitude"],   b["latitude"]
+        dx, dy  = x2 - x1, y2 - y1
+        if dx == 0 and dy == 0:
+            return math.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2)
+        return abs(dy * x0 - dx * y0 + x2 * y1 - y2 * x1) / math.sqrt(dx ** 2 + dy ** 2)
+
+    def dp(pts):
+        if len(pts) <= 2:
+            return pts
+        max_d, max_i = 0.0, 0
+        for i in range(1, len(pts) - 1):
+            d = perp_dist(pts[i], pts[0], pts[-1])
+            if d > max_d:
+                max_d, max_i = d, i
+        if max_d > TOLERANCE:
+            return dp(pts[:max_i + 1])[:-1] + dp(pts[max_i:])
+        return [pts[0], pts[-1]]
+
+    return dp(kept)
 
 
 @app.route("/api/location/known-places")
