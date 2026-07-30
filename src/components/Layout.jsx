@@ -80,6 +80,11 @@ export function Layout() {
               </NavLink>
             </li>
           ))}
+          <li>
+            <a href="http://watchdog.tail186ff8.ts.net:9001" target="_blank" rel="noopener noreferrer">
+              <span className="icon">🐕</span> Watchdog
+            </a>
+          </li>
         </ul>
 
         <div className="nav-footer">
