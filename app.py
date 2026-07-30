@@ -186,6 +186,34 @@ def spa(path):
 
 
 
+def _read_system_health():
+    """Cheap, non-blocking CPU/RAM/temperature snapshot (no DB access)."""
+    cpu  = psutil.cpu_percent(interval=None)
+    ram  = psutil.virtual_memory()
+    temps = {}
+    try:
+        for name, entries in psutil.sensors_temperatures().items():
+            for e in entries:
+                temps[e.label or name] = round(e.current, 1)
+    except Exception:
+        pass
+
+    return {
+        "cpu_pct":      cpu,
+        "ram_used_gb":  round(ram.used  / 1e9, 2),
+        "ram_total_gb": round(ram.total / 1e9, 2),
+        "ram_pct":      ram.percent,
+        "temps":        temps,
+    }
+
+
+@app.route("/api/system-health")
+@login_required
+def system_health_api():
+    """Lightweight CPU/RAM/temperature snapshot, safe to poll frequently."""
+    return jsonify(_read_system_health())
+
+
 @app.route("/api/overview")
 @login_required
 def overview_api():
@@ -197,15 +225,7 @@ def overview_api():
     except Exception:
         pass
 
-    cpu  = psutil.cpu_percent(interval=None)
-    ram  = psutil.virtual_memory()
-    temps = {}
-    try:
-        for name, entries in psutil.sensors_temperatures().items():
-            for e in entries:
-                temps[e.label or name] = round(e.current, 1)
-    except Exception:
-        pass
+    health = _read_system_health()
 
     smart_data = None
     try:
@@ -224,14 +244,6 @@ def overview_api():
         "total_gb": round(hdd_usage.total / 1e9, 2),
         "pct":      round(hdd_usage.used / hdd_usage.total * 100, 1),
     } if hdd_usage else None
-
-    health = {
-        "cpu_pct":           cpu,
-        "ram_used_gb":       round(ram.used  / 1e9, 2),
-        "ram_total_gb":      round(ram.total / 1e9, 2),
-        "ram_pct":           ram.percent,
-        "temps":             temps,
-    }
 
     tables = []
     api_usage = {}

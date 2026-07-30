@@ -169,7 +169,7 @@ function OverviewDbGroups({ tables }) {
   )
 }
 
-const WATCHDOG_CHECK_ORDER = ['internet', 'tailscale', 'api', 'shelly', 'cloudflare', 'prefect']
+const WATCHDOG_CHECK_ORDER = ['internet', 'tailscale', 'api', 'shelly', 'cloudflare', 'prefect', 'ssh_tailscale', 'ssh_lan']
 
 function formatWatchdogTime(ts) {
   if (!ts) return null
@@ -183,20 +183,26 @@ export default function Overview() {
   const [status,     setStatus]     = useState(null)
   const [backups,    setBackups]    = useState(null)
   const [watchdog,   setWatchdog]   = useState(null)
+  const [sysHealth,  setSysHealth]  = useState(null)
   const [fetchError, setFetchError] = useState(null)
+  const [wdExpanded, setWdExpanded] = useState(false)
 
   useEffect(() => {
     apiJson('/api/overview').then(setOverview).catch(() => setFetchError('Failed to load overview data'))
     apiJson('/api/status').then(setStatus).catch(() => setFetchError('Failed to load status data'))
     apiJson('/api/backups').then(setBackups).catch(() => setFetchError('Failed to load backup data'))
     apiJson('/api/watchdog/status').then(setWatchdog).catch(() => {})
-    const interval = setInterval(() => {
+    apiJson('/api/system-health').then(setSysHealth).catch(() => {})
+    const wdInterval = setInterval(() => {
       apiJson('/api/watchdog/status').then(setWatchdog).catch(() => {})
     }, 60000)
-    return () => clearInterval(interval)
+    const healthInterval = setInterval(() => {
+      apiJson('/api/system-health').then(setSysHealth).catch(() => {})
+    }, 5000)
+    return () => { clearInterval(wdInterval); clearInterval(healthInterval) }
   }, [])
 
-  const h  = overview?.health    || {}
+  const h  = sysHealth || overview?.health || {}
   const sd = overview?.smart_data        // null = file missing, object = data present
   const now = overview?.now ? new Date(overview.now) : new Date()
   const nowStr = now.toLocaleDateString('en-GB', { weekday:'long', day:'2-digit', month:'short', year:'numeric' })
@@ -256,6 +262,10 @@ export default function Overview() {
           ...WATCHDOG_CHECK_ORDER.filter(k => k in checks),
           ...Object.keys(checks).filter(k => !WATCHDOG_CHECK_ORDER.includes(k)),
         ]
+        const healthy = ordered.filter(k => checks[k].ok === true).length
+        const failed  = ordered.filter(k => checks[k].ok === false).length
+        const total   = healthy + failed
+        const summaryColor = total === 0 ? 'var(--text-dim)' : failed > 0 ? 'var(--red)' : 'var(--green)'
         return (
           <>
             <style>{`
@@ -273,32 +283,63 @@ export default function Overview() {
                 </span>
               ) : (
                 <>
-                {timeStr && (
-                  <div style={{ textAlign: 'right', fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginBottom: '16px' }}>
-                    Last check: {timeStr}
+                <div
+                  onClick={() => setWdExpanded(v => !v)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: summaryColor, flexShrink: 0 }} />
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: '13px', color: summaryColor }}>
+                    {total === 0 ? 'No data yet' : `${healthy}/${total} healthy`}
+                  </span>
+                  {timeStr && (
+                    <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)', marginLeft: 'auto' }}>
+                      Last check: {timeStr}
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: '10px', color: 'var(--text-dim)', marginLeft: timeStr ? '0' : 'auto',
+                    transform: wdExpanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+                  }}>
+                    &#9656;
+                  </span>
+                </div>
+                {wdExpanded && (
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', marginTop: '16px',
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden',
+                  }}>
+                    {ordered.map((key, i) => {
+                      const check = checks[key]
+                      const color = check.ok === true ? 'var(--green)' : check.ok === false ? 'var(--red)' : 'var(--text-dim)'
+                      return (
+                        <div
+                          key={key}
+                          title={check.detail || ''}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px',
+                            borderTop: i === 0 ? 'none' : '1px solid var(--border)', cursor: 'default',
+                          }}
+                        >
+                          <div className="wd-dot" style={{
+                            width: '9px', height: '9px', borderRadius: '50%',
+                            background: color, color, flexShrink: 0,
+                          }} />
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-hi)', textTransform: 'uppercase', letterSpacing: '.03em', flex: 1 }}>
+                            {key}
+                          </span>
+                          {check.detail && (
+                            <span style={{
+                              fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--text-dim)',
+                              maxWidth: '50%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {check.detail}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
-                <div style={{ display: 'flex' }}>
-                  {ordered.map(key => {
-                    const check = checks[key]
-                    const color = check.ok ? 'var(--green)' : 'var(--red)'
-                    return (
-                      <div
-                        key={key}
-                        title={check.detail || ''}
-                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'default' }}
-                      >
-                        <div className="wd-dot" style={{
-                          width: '12px', height: '12px', borderRadius: '50%',
-                          background: color, color,
-                        }} />
-                        <span style={{ fontFamily: 'var(--mono)', fontSize: '9px', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '.03em' }}>
-                          {key}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
                 </>
               )}
             </Card>
