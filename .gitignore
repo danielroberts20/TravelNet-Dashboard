@@ -4,3 +4,4 @@ __pycache__/
 certs/
 node_modules/
 static/dist/
+static/old icon.png
