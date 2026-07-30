@@ -110,6 +110,16 @@ def manifest():
     resp.headers["Content-Type"] = "application/manifest+json"
     return resp
 
+# Served from the root (not /static/sw.js) so its default scope is '/' —
+# needed to intercept navigations to any page, not just /static/*.
+@app.route("/sw.js")
+def service_worker():
+    resp = send_from_directory("static", "sw.js")
+    resp.headers["Content-Type"] = "application/javascript"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 def login_required(f):
     @wraps(f)
