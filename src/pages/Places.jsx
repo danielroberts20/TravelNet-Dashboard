@@ -17,35 +17,46 @@ function formatDuration(mins) {
   return hours > 0 ? `${days}d ${hours}h` : `${days}d`
 }
 
-function formatDateTime(iso) {
+// `timeZone` should be the IANA zone of the place the timestamp represents
+// (e.g. place.timezone from the API) — not the viewer's browser timezone.
+// Falling back to undefined lets the browser use its own local zone, which
+// is the best we can do for places we haven't geocoded a timezone for yet.
+function formatDateTime(iso, timeZone) {
   if (!iso) return '—'
   try {
     const d = new Date(iso)
     return d.toLocaleString('en-GB', {
       day: 'numeric', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
+      ...(timeZone ? { timeZone } : {}),
     })
   } catch {
     return iso
   }
 }
 
-function formatTimeRange(arrivedAt, departedAt, isOngoing) {
+function formatTimeRange(arrivedAt, departedAt, isOngoing, timeZone) {
   if (!arrivedAt) return '—'
+  const tzOpt = timeZone ? { timeZone } : {}
   const arrived = new Date(arrivedAt)
   const arrivedStr = arrived.toLocaleString('en-GB', {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
+    ...tzOpt,
   })
   if (isOngoing) return `${arrivedStr} → Ongoing`
   if (!departedAt) return arrivedStr
   const dep = new Date(departedAt)
-  const sameDay = arrived.toDateString() === dep.toDateString()
+  // Compare dates in the same zone we're displaying them in, so a visit that
+  // crosses midnight locally (but not in the browser's zone, or vice versa)
+  // still gets the "same day" short form.
+  const sameDay = arrived.toLocaleDateString('en-GB', tzOpt) === dep.toLocaleDateString('en-GB', tzOpt)
   const depStr = sameDay
-    ? dep.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit' })
+    ? dep.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', ...tzOpt })
     : dep.toLocaleString('en-GB', {
         day: 'numeric', month: 'short', year: 'numeric',
         hour: '2-digit', minute: '2-digit',
+        ...tzOpt,
       })
   return `${arrivedStr} → ${depStr}`
 }
@@ -106,7 +117,7 @@ function PlaceItem({ place, selected, onClick }) {
   )
 }
 
-function VisitRow({ visit, onUpdate }) {
+function VisitRow({ visit, timezone, onUpdate }) {
   const [editing, setEditing]   = useState(false)
   const [notesInput, setNotes]  = useState(visit.notes ?? '')
   const [saving, setSaving]     = useState(false)
@@ -130,7 +141,7 @@ function VisitRow({ visit, onUpdate }) {
   }
 
   const dur      = formatDuration(visit.duration_mins)
-  const timeRange = formatTimeRange(visit.arrived_at, visit.departed_at, visit.is_ongoing)
+  const timeRange = formatTimeRange(visit.arrived_at, visit.departed_at, visit.is_ongoing, timezone)
 
   return (
     <div style={{
@@ -215,6 +226,7 @@ function DetailPanel({ place, onPlaceUpdate }) {
   const [displayName, setDisplayName] = useState(place.display_name)
   const [isGeocoded, setIsGeocoded]   = useState(place.is_geocoded)
   const [visits, setVisits]     = useState(null)
+  const [visitsTimezone, setVisitsTimezone] = useState(place.timezone)
   const [unnotedOnly, setUnnotedOnly] = useState(false)
 
   useEffect(() => {
@@ -223,6 +235,7 @@ function DetailPanel({ place, onPlaceUpdate }) {
     setDisplayName(place.display_name)
     setIsGeocoded(place.is_geocoded)
     setVisits(null)
+    setVisitsTimezone(place.timezone)
     loadVisits()
   }, [place.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -230,7 +243,12 @@ function DetailPanel({ place, onPlaceUpdate }) {
     try {
       const resp = await apiFetch(`/api/places/${place.id}/visits`)
       const d = await resp.json()
-      if (resp.ok) setVisits(d.visits)
+      if (resp.ok) {
+        setVisits(d.visits)
+        // API is the source of truth for the place's timezone; falls back to
+        // place.timezone (set above) if the endpoint doesn't have one either.
+        if (d.timezone) setVisitsTimezone(d.timezone)
+      }
     } catch {}
   }
 
@@ -317,7 +335,7 @@ function DetailPanel({ place, onPlaceUpdate }) {
 
         <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px' }}>
           {place.latitude.toFixed(4)}°, {place.longitude.toFixed(4)}°
-          {' · '}First seen {formatDateTime(place.first_seen)}
+          {' · '}First seen {formatDateTime(place.first_seen, place.timezone)}
           {' · '}{place.visit_count} visit{place.visit_count !== 1 ? 's' : ''}
           {dur ? ` · ${dur} total` : ''}
         </div>
@@ -397,7 +415,7 @@ function DetailPanel({ place, onPlaceUpdate }) {
                 No visits{unnotedOnly ? ' without notes' : ''}
               </div>
             : visibleVisits.map(v => (
-                <VisitRow key={v.id} visit={v} onUpdate={updateVisit} />
+                <VisitRow key={v.id} visit={v} timezone={visitsTimezone} onUpdate={updateVisit} />
               ))
         }
       </div>

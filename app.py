@@ -1660,7 +1660,8 @@ def location_known_places():
                 kp.longitude,
                 kp.visit_count,
                 kp.last_visited,
-                p.display_name
+                p.display_name,
+                p.timezone
             FROM known_places kp
             LEFT JOIN places p ON kp.place_id = p.id
             ORDER BY kp.visit_count DESC

@@ -47,10 +47,14 @@ const INJECTED_CSS = `
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatTs(ts) {
+// `timeZone` should be the IANA zone of the place the timestamp represents
+// (place.timezone) — without it these fall back to the viewer's browser
+// timezone, which is wrong for a place visit timestamp.
+function formatTs(ts, timeZone) {
   const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-       + ' ' + d.toLocaleDateString([], { day: '2-digit', month: 'short' })
+  const tzOpt = timeZone ? { timeZone } : {}
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false, ...tzOpt })
+       + ' ' + d.toLocaleDateString([], { day: '2-digit', month: 'short', ...tzOpt })
 }
 
 function fmtDate(iso) {
@@ -106,8 +110,8 @@ function placePopupHtml(place, placeVisits) {
   if (placeVisits && placeVisits.length > 0) {
     visitLines = '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px">'
     visitLines += placeVisits.map(v => {
-      const arr = formatTs(v.arrived_at)
-      const dep = v.departed_at ? formatTs(v.departed_at) : 'ongoing'
+      const arr = formatTs(v.arrived_at, place.timezone)
+      const dep = v.departed_at ? formatTs(v.departed_at, place.timezone) : 'ongoing'
       return `<div style="color:#555;font-size:10px;margin-bottom:1px">${arr} → ${dep} (${fmtDuration(v.duration_mins)})</div>`
     }).join('')
     visitLines += '</div>'
