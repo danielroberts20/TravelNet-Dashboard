@@ -49,6 +49,37 @@
   a.watchdog-link:hover {
     background: rgba(61,142,240,.2);
   }
+  .actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  button.retry-btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border-radius: 6px;
+    background: rgba(120,200,140,.12);
+    color: #7ec98f;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid #2a3045;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  button.retry-btn:hover {
+    background: rgba(120,200,140,.2);
+  }
+  button.retry-btn:disabled {
+    opacity: .6;
+    cursor: default;
+  }
+  .status {
+    font-size: 12px;
+    color: #5a6480;
+    margin: 14px 0 0;
+    min-height: 16px;
+  }
 </style>
 </head>
 <body>
@@ -56,9 +87,74 @@
     <div class="icon">📡</div>
     <h1>Dashboard Unreachable</h1>
     <p>The TravelNet backend isn't responding right now. Try again shortly, or check the Watchdog for status.</p>
-    <a class="watchdog-link" href="http://watchdog.tail186ff8.ts.net:9001" target="_blank" rel="noopener noreferrer">
-      🐕 Open Watchdog
-    </a>
+    <div class="actions">
+      <button class="retry-btn" id="retry-btn">↺ Retry Connection</button>
+      <a class="watchdog-link" href="http://watchdog.tail186ff8.ts.net:9001" target="_blank" rel="noopener noreferrer">
+        🐕 Open Watchdog
+      </a>
+    </div>
+    <p class="status" id="status"></p>
   </div>
+  <script>
+    // Probe the same origin the SW would fetch for a navigation, and reload
+    // the page as soon as it responds successfully — this re-runs the SW's
+    // fetch handler, which serves the real app once the backend answers.
+    const btn = document.getElementById('retry-btn');
+    const status = document.getElementById('status');
+    const PROBE_TIMEOUT_MS = 3500;
+    const AUTO_POLL_MS = 5000;
+    let polling = false;
+
+    async function probe() {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      try {
+        const res = await fetch(location.origin + '/', {
+          method: 'GET',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        return res.ok;
+      } catch (err) {
+        return false;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    async function retry(manual) {
+      if (manual) {
+        btn.disabled = true;
+        btn.textContent = '↺ Retrying…';
+        status.textContent = 'Checking connection…';
+      }
+      const ok = await probe();
+      if (ok) {
+        status.textContent = 'Connection restored — reloading…';
+        location.reload();
+        return true;
+      }
+      if (manual) {
+        btn.disabled = false;
+        btn.textContent = '↺ Retry Connection';
+        status.textContent = 'Still unreachable. Retrying automatically…';
+      }
+      return false;
+    }
+
+    btn.addEventListener('click', () => retry(true));
+
+    // Auto-poll in the background so the page reconnects on its own once the
+    // backend comes back, without requiring the user to click anything.
+    (async function autoPoll() {
+      if (polling) return;
+      polling = true;
+      while (true) {
+        await new Promise((r) => setTimeout(r, AUTO_POLL_MS));
+        const ok = await retry(false);
+        if (ok) break;
+      }
+    })();
+  </script>
 </body>
 </html>
