@@ -48,10 +48,22 @@ self.addEventListener('fetch', (event) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), NAV_TIMEOUT_MS);
 
+  // event.request.redirect is always "manual" for navigations, and that mode
+  // is immutable here — we can't make this fetch() follow a redirect (Chrome
+  // throws if you try to satisfy respondWith() for a "manual" request with a
+  // response that came from actually following a redirect). A 302 (e.g.
+  // Cloudflare Access's login challenge) therefore comes back as an *opaque
+  // redirect* (type: 'opaqueredirect', status 0, ok: false) — that's the
+  // correct, expected shape, not a failure, and must be passed straight
+  // through so the browser performs the real redirect itself.
   event.respondWith(
     fetch(event.request, { signal: controller.signal })
       .then((res) => {
         clearTimeout(timeoutId);
+        if (res.type === 'opaqueredirect') {
+          console.log(`[sw] navigate: opaque redirect for ${url} after ${(performance.now() - t0).toFixed(0)}ms, passing through`);
+          return res;
+        }
         if (!res.ok) {
           console.log(`[sw] navigate: network responded but not ok for ${url} (status ${res.status}) after ${(performance.now() - t0).toFixed(0)}ms`);
           console.log(`[sw] navigate: serving cached fallback for ${url}`);
