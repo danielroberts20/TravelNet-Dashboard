@@ -100,7 +100,7 @@ def manifest():
         "theme_color": "#0d0f14",
         "icons": [
             {
-                "src": "/static/icon.png",
+                "src": "/static/icon-v2.png",
                 "sizes": "180x180",
                 "type": "image/png"
             }
