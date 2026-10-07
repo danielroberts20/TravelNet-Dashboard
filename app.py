@@ -53,6 +53,10 @@ TREVOR_URL         = os.environ.get("TREVOR_URL", "http://trevor:8300")
 WATCHDOG_IP        = os.environ.get("WATCHDOG_IP", "")
 TREVOR_API_KEY     = os.environ.get("TREVOR_API_KEY", "")
 PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186ff8.ts.net:4200/api")
+# Browser-facing Prefect UI base. Separate from PREFECT_API_URL, which is the
+# container-internal address (http://prefect-server:4200/api) and not reachable
+# from a browser.
+PREFECT_UI_URL     = os.environ.get("PREFECT_UI_URL", "http://travelnet.tail186ff8.ts.net:4200").rstrip("/")
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
 TRAVEL_YML_PATH    = os.environ.get("TRAVEL_YML_PATH",  "/travel.yml")
@@ -170,6 +174,16 @@ def table_exists(conn, name):
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):
     return send_from_directory("static/dist/assets", filename)
+
+# ── Liveness probe ────────────────────────────────────────────────────────────
+# Used by the Docker healthcheck. Must stay unauthenticated and explicit:
+# the SPA catch-all below answers 200 for any unknown path, so probing an
+# arbitrary URL proves nothing.
+
+@app.route("/healthz")
+def healthz():
+    return "ok", 200, {"Content-Type": "text/plain"}
+
 
 # ── SPA catch-all ─────────────────────────────────────────────────────────────
 # Serves the React build for any URL not matched by an explicit Flask route.
@@ -1140,7 +1154,6 @@ def prefect_flow_run_status(flow_run_id):
         resp.raise_for_status()
         run   = resp.json()
         state = run.get("state") or {}
-        ui_base = PREFECT_API_URL.rsplit("/api", 1)[0]
 
         return jsonify({
             "id":             run.get("id"),
@@ -1151,7 +1164,7 @@ def prefect_flow_run_status(flow_run_id):
             "end_time":       run.get("end_time"),
             "total_run_time": run.get("total_run_time"),
             "auto_scheduled": run.get("auto_scheduled", False),
-            "prefect_ui_url": f"{ui_base}/runs/flow-run/{flow_run_id}",
+            "prefect_ui_url": f"{PREFECT_UI_URL}/runs/flow-run/{flow_run_id}",
         })
     except requests.HTTPError as e:
         return jsonify({"error": f"Prefect error {e.response.status_code}"}), 502
@@ -1382,7 +1395,14 @@ def places_visits_update(visit_id):
 def fastapi_health():
     try:
         resp = requests.get(f"{FASTAPI_URL}/health", headers=fastapi_headers(), timeout=5)
-        return jsonify({"status": "ok", "code": resp.status_code, "body": resp.json()})
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        # Previously any response that parsed as JSON counted as "ok", including a 404.
+        if not resp.ok:
+            return jsonify({"status": "error", "code": resp.status_code, "body": body}), 503
+        return jsonify({"status": "ok", "code": resp.status_code, "body": body})
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 503
 
