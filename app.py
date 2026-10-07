@@ -57,6 +57,10 @@ PREFECT_API_URL    = os.environ.get("PREFECT_API_URL", "http://travelnet.tail186
 # container-internal address (http://prefect-server:4200/api) and not reachable
 # from a browser.
 PREFECT_UI_URL     = os.environ.get("PREFECT_UI_URL", "http://travelnet.tail186ff8.ts.net:4200").rstrip("/")
+# HTTP Basic credentials for the Prefect server, as "user:password" (same variable the
+# Prefect SDK reads). None while the server is still open, so this is safe to roll out first.
+_prefect_auth = os.environ.get("PREFECT_API_AUTH_STRING", "")
+PREFECT_AUTH = tuple(_prefect_auth.split(":", 1)) if ":" in _prefect_auth else None
 FLOW_RESULTS_PATH  = os.environ.get("FLOW_RESULTS_PATH", "/data/flow_results.json")
 SMART_DATA_PATH    = os.environ.get("SMART_DATA_PATH",  "/data/smart_data.json")
 TRAVEL_YML_PATH    = os.environ.get("TRAVEL_YML_PATH",  "/travel.yml")
@@ -1028,6 +1032,7 @@ def prefect_deployments():
     try:
         deps_resp = requests.post(
             f"{PREFECT_API_URL}/deployments/filter",
+            auth=PREFECT_AUTH,
             json={"limit": 200, "offset": 0},
             timeout=10,
         )
@@ -1041,6 +1046,7 @@ def prefect_deployments():
 
         runs_resp = requests.post(
             f"{PREFECT_API_URL}/flow_runs/filter",
+            auth=PREFECT_AUTH,
             json={
                 "limit": 200,
                 "sort": "START_TIME_DESC",
@@ -1117,6 +1123,7 @@ def prefect_trigger_run(deployment_id):
     try:
         resp = requests.post(
             f"{PREFECT_API_URL}/deployments/{deployment_id}/create_flow_run",
+            auth=PREFECT_AUTH,
             json={},
             timeout=10,
         )
@@ -1149,6 +1156,7 @@ def prefect_flow_run_status(flow_run_id):
     try:
         resp = requests.get(
             f"{PREFECT_API_URL}/flow_runs/{flow_run_id}",
+            auth=PREFECT_AUTH,
             timeout=10,
         )
         resp.raise_for_status()
