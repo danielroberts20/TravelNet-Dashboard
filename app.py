@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import time
 import shutil
 import psutil #type: ignore
 from zoneinfo import ZoneInfo
@@ -78,11 +79,15 @@ def fastapi_headers():
 # Fetched lazily on first use so there is no startup race condition with the
 # ingest container. Cached permanently once a non-empty list is returned.
 _resettable_tables_cache: list | None = None
+_resettable_retry_after: float = 0.0   # don't re-hit a down FastAPI on every table in a loop
+_RESETTABLE_RETRY_SECS = 30
 
 def _get_resettable_tables() -> list:
-    global _resettable_tables_cache
+    global _resettable_tables_cache, _resettable_retry_after
     if _resettable_tables_cache is not None:
         return _resettable_tables_cache
+    if time.monotonic() < _resettable_retry_after:
+        return []
     try:
         resp = requests.get(
             f"{FASTAPI_URL}/database/resettable-tables",
@@ -95,6 +100,7 @@ def _get_resettable_tables() -> list:
             return _resettable_tables_cache
     except Exception as e:
         print(f"[resettable-tables] fetch failed: {e}")
+    _resettable_retry_after = time.monotonic() + _RESETTABLE_RETRY_SECS
     return []
 
 @app.route("/manifest.json")
@@ -163,9 +169,18 @@ def logout():
     return resp
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def get_db():
+VIEW_COUNT_CAP = 100_000
+
+def get_db(max_seconds: float | None = 30):
+    """Read-only connection. Queries running longer than max_seconds are aborted
+    (sqlite3.OperationalError: interrupted) so one slow query can't pin a gevent
+    worker, which blocks on SQLite, until gunicorn kills it. Pass None to disable."""
     conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    if max_seconds:
+        deadline = time.monotonic() + max_seconds
+        # Return non-zero => abort the running statement. Checked every 100k VM steps.
+        conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 100_000)
     return conn
 
 def table_exists(conn, name):
@@ -341,10 +356,14 @@ def db_tables_counts():
         try:
             conn = get_db()
             rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
+                "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
             ).fetchall()
             for r in rows:
                 tname = r["name"]
+                if r["type"] == "view":
+                    # Counting a view runs its full query (location_unified scans ~500k rows).
+                    yield f"data: {json.dumps({'name': tname, 'count': '—'})}\n\n"
+                    continue
                 count = conn.execute(f"SELECT COUNT(*) FROM [{tname}]").fetchone()[0]
                 yield f"data: {json.dumps({'name': tname, 'count': count})}\n\n"
             conn.close()
@@ -392,7 +411,19 @@ def db_table_api(table):
         else:
             columns = []
 
-        total     = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+        is_view = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='view' AND name=?", (table,)
+        ).fetchone() is not None
+        if is_view:
+            # A full COUNT(*) re-runs the view (location_unified scans ~500k rows) on
+            # every page request, so count at most VIEW_COUNT_CAP rows.
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM (SELECT 1 FROM [{table}] LIMIT {VIEW_COUNT_CAP})"
+            ).fetchone()[0]
+            total_capped = total >= VIEW_COUNT_CAP
+        else:
+            total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+            total_capped = False
         page      = max(1, int(request.args.get("page", 1)))
         page_size = int(request.args.get("page_size", 50))
         page_size = max(10, min(page_size, 500))
@@ -422,6 +453,7 @@ def db_table_api(table):
         "columns":     columns,
         "rows":        rows,
         "total":       total,
+        "total_capped": total_capped,
         "page":        page,
         "page_size":   page_size,
         "total_pages": total_pages,
@@ -474,7 +506,7 @@ def db_table_download(table):
     import csv
     import io
     try:
-        conn = get_db()
+        conn = get_db(max_seconds=None)   # streamed export may legitimately run long
         exists = conn.execute(
             "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name=?", (table,)
         ).fetchone()
@@ -484,17 +516,29 @@ def db_table_download(table):
 
         cursor = conn.execute(f"SELECT * FROM [{table}]")
         cols = [d[0] for d in cursor.description]
-        rows = cursor.fetchall()
-        conn.close()
 
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(cols)
-        writer.writerows(rows)
-        buf.seek(0)
+        def generate():
+            # Stream in batches so a large table is never held in memory and the
+            # connection is closed even if the client disconnects.
+            try:
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(cols)
+                while True:
+                    batch = cursor.fetchmany(2000)
+                    if not batch:
+                        break
+                    writer.writerows(batch)
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+                if buf.tell():
+                    yield buf.getvalue()
+            finally:
+                conn.close()
 
         return Response(
-            buf.getvalue(),
+            stream_with_context(generate()),
             mimetype="text/csv",
             headers={"Content-Disposition": f"attachment; filename={table}.csv"}
         )
@@ -1009,7 +1053,7 @@ def crons_api():
     try:
         conn = get_db()
         if table_exists(conn, "log_digest"):
-            rows = conn.execute("SELECT * FROM log_digest ORDER BY rowid DESC").fetchall()
+            rows = conn.execute("SELECT * FROM log_digest ORDER BY rowid DESC LIMIT 500").fetchall()
             jobs = [dict(r) for r in rows]
         if table_exists(conn, "api_usage"):
             for service in ["exchangerate.host", "open-meteo"]:
@@ -1231,7 +1275,10 @@ def watchdog_status():
 @login_required
 def logs_stream():
     """SSE endpoint: streams docker logs tail then follows."""
-    lines = request.args.get("lines", 200)
+    try:
+        lines = max(1, min(int(request.args.get("lines", 200)), 5000))
+    except ValueError:
+        lines = 200
     # Validate container against allowlist to prevent arbitrary command injection
     requested = request.args.get("container", DOCKER_CONTAINER)
     if requested not in {DOCKER_CONTAINER, TREVOR_CONTAINER}:
@@ -1240,6 +1287,7 @@ def logs_stream():
 
     def generate():
         cmd = ["docker", "logs", "--tail", str(lines), "--follow", container]
+        proc = None
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -1259,6 +1307,12 @@ def logs_stream():
             proc.wait()
         except Exception as e:
             yield f"data: [ERROR] {e}\n\n"
+        finally:
+            # Runs on client disconnect (GeneratorExit) too: stop `docker logs --follow`
+            # so closed tabs don't leave orphaned processes.
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     return Response(
         stream_with_context(generate()),
@@ -1555,13 +1609,35 @@ def location_points():
             conn.close()
             return jsonify({"error": "location_unified view not found"}), 500
 
+        # Query the base tables directly with raw-column range filters so the
+        # timestamp indexes are used (wrapping the column in datetime() or going
+        # through the location_unified view forced full scans of ~500k rows).
+        # Mirrors the view's logic: shortcuts rows are dropped when an overland
+        # point exists within +/-3 minutes.
+        ts_start = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_end   = window_end.strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = conn.execute("""
             SELECT timestamp, latitude, longitude, source, activity, speed, battery, accuracy
-            FROM location_unified
-            WHERE datetime(timestamp) >= datetime(?, 'unixepoch')
-              AND datetime(timestamp) <= datetime(?, 'unixepoch')
+            FROM (
+                SELECT 'overland' AS source, o.timestamp, o.latitude, o.longitude,
+                       o.motion AS activity, o.speed,
+                       o.battery_level AS battery, o.horizontal_accuracy AS accuracy
+                FROM location_overland o
+                WHERE o.timestamp >= ? AND o.timestamp <= ?
+                UNION ALL
+                SELECT 'shortcuts', s.timestamp, s.latitude, s.longitude,
+                       NULL, NULL, CAST(s.battery AS REAL) / 100.0, NULL
+                FROM location_shortcuts s
+                WHERE s.timestamp >= ? AND s.timestamp <= ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM location_overland o2
+                    WHERE o2.timestamp BETWEEN
+                        datetime(s.timestamp, '-3 minutes') AND
+                        datetime(s.timestamp, '+3 minutes')
+                  )
+            )
             ORDER BY timestamp ASC
-        """, (int(window_start.timestamp()), int(window_end.timestamp()))).fetchall()
+        """, (ts_start, ts_end, ts_start, ts_end)).fetchall()
 
         visits_raw = []
         if table_exists(conn, "place_visits") and table_exists(conn, "known_places"):
@@ -1570,10 +1646,10 @@ def location_points():
                        pv.arrived_at, pv.departed_at
                 FROM place_visits_cleaned pv
                 JOIN known_places kp ON kp.id = pv.known_place_id
-                WHERE datetime(pv.arrived_at) <= datetime(?, 'unixepoch')
-                  AND (datetime(pv.departed_at) >= datetime(?, 'unixepoch') OR pv.departed_at IS NULL)
+                WHERE pv.arrived_at <= ?
+                  AND (pv.departed_at >= ? OR pv.departed_at IS NULL)
                 ORDER BY pv.arrived_at ASC
-            """, (int(window_end.timestamp()), int(window_start.timestamp()))).fetchall()
+            """, (ts_end, ts_start)).fetchall()
             visits_raw = [dict(r) for r in vrows]
 
         conn.close()
@@ -2008,6 +2084,7 @@ def restore_stream_proxy():
     live     = request.args.get("live", "false")
 
     def generate():
+        resp = None
         try:
             resp = requests.get(
                 f"{FASTAPI_URL}/database/restore/stream",
@@ -2021,6 +2098,10 @@ def restore_stream_proxy():
                     yield chunk
         except Exception as e:
             yield f"data: error|{e}\n\n".encode()
+        finally:
+            # Release the upstream connection if the browser disconnects mid-restore.
+            if resp is not None:
+                resp.close()
 
     return Response(
         stream_with_context(generate()),
@@ -2095,7 +2176,7 @@ def trevor_chat():
             f"{TREVOR_URL}/chat",
             headers=trevor_headers(),
             json=body,
-            timeout=120,  # LLM inference can be slow
+            timeout=110,  # LLM inference can be slow; stay under gunicorn's 120s worker timeout
         )
         return jsonify(resp.json()), resp.status_code
     except Exception as e:
