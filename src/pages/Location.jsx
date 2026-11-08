@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { apiJson } from '../api'
-import { timeSince } from '../utils'
+import { timeSince, appleMapsUrl } from '../utils'
 
 const FALLBACK_STYLE = 'https://tiles.openfreemap.org/styles/bright'
 const MAPTILER_STYLE = (key) => `https://api.maptiler.com/maps/dataviz/style.json?key=${key}`
@@ -121,7 +121,7 @@ function placePopupHtml(place, placeVisits) {
     ${dispLine}
     <div style="color:#666;margin-bottom:2px">Visits: ${place.visit_count ?? 0}</div>
     <div style="color:#666;margin-bottom:2px">Last: ${lastSeen}</div>
-    <div style="color:#999;font-size:10px">${lat}, ${lon}</div>
+    <div style="font-size:10px"><a href="${appleMapsUrl(place.latitude, place.longitude, place.label)}" target="_blank" rel="noopener noreferrer" title="Open in Apple Maps" style="color:#999;text-decoration:underline dotted">${lat}, ${lon}</a></div>
     ${visitLines}
   </div>`
 }

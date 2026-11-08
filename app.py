@@ -1336,6 +1336,103 @@ def places_list():
         return jsonify({"error": str(e)}), 503
 
 
+@app.route("/api/places/add-current", methods=["POST"])
+@login_required
+def places_add_current():
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/upload/places/add-current",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=15,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/sub-place-types")
+@login_required
+def sub_place_types():
+    try:
+        resp = requests.get(
+            f"{FASTAPI_URL}/upload/places/sub-place-types",
+            headers=fastapi_headers(),
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>/sub-places", methods=["GET", "POST"])
+@login_required
+def place_sub_places(place_id):
+    try:
+        if request.method == "POST":
+            resp = requests.post(
+                f"{FASTAPI_URL}/upload/places/{place_id}/sub-places",
+                headers=fastapi_headers(),
+                json=request.get_json(silent=True) or {},
+                timeout=10,
+            )
+        else:
+            resp = requests.get(
+                f"{FASTAPI_URL}/upload/places/{place_id}/sub-places",
+                headers=fastapi_headers(),
+                timeout=10,
+            )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/sub-places/<int:sub_place_id>", methods=["PATCH", "DELETE"])
+@login_required
+def sub_place_item(sub_place_id):
+    try:
+        url = f"{FASTAPI_URL}/upload/places/sub-places/{sub_place_id}"
+        if request.method == "PATCH":
+            resp = requests.patch(url, headers=fastapi_headers(),
+                                  json=request.get_json(silent=True) or {}, timeout=10)
+        else:
+            resp = requests.delete(url, headers=fastapi_headers(), timeout=10)
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>", methods=["DELETE"])
+@login_required
+def places_delete(place_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        resp = requests.delete(
+            f"{FASTAPI_URL}/upload/places/{place_id}",
+            headers=fastapi_headers(),
+            json=data,
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
+@app.route("/api/places/<int:place_id>/restore", methods=["POST"])
+@login_required
+def places_restore(place_id):
+    try:
+        resp = requests.post(
+            f"{FASTAPI_URL}/upload/places/{place_id}/restore",
+            headers=fastapi_headers(),
+            timeout=10,
+        )
+        return (resp.content, resp.status_code, {"Content-Type": "application/json"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 503
+
+
 @app.route("/api/places/<int:place_id>", methods=["PATCH"])
 @login_required
 def places_update(place_id):
@@ -1692,6 +1789,7 @@ def location_known_places():
                 p.timezone
             FROM known_places kp
             LEFT JOIN places p ON kp.place_id = p.id
+            WHERE kp.deleted_at IS NULL
             ORDER BY kp.visit_count DESC
         """).fetchall()
         conn.close()

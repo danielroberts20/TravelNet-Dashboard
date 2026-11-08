@@ -48,3 +48,14 @@ export function defaultGroupExpanded() {
   init['Other'] = false
   return init
 }
+
+
+/**
+ * Apple Maps link for a coordinate. The https://maps.apple.com universal link opens the
+ * Maps app on iPhone and Mac, and falls back to Maps on the web elsewhere.
+ * `label` (optional) names the dropped pin.
+ */
+export function appleMapsUrl(lat, lon, label) {
+  const ll = `${Number(lat)},${Number(lon)}`
+  return `https://maps.apple.com/?ll=${ll}` + (label ? `&q=${encodeURIComponent(label)}` : '')
+}
